@@ -5,87 +5,108 @@ from uuid import uuid4
 import os
 from typing import List
 
-app = FastAPI()
+app = FastAPI(title="Speech Risk Detection API")
 
-# Define the AudioData model (contract)
+# --- DIRECTORY SETUP ---
+UPLOAD_DIR = "uploads/"
+if not os.path.exists(UPLOAD_DIR):
+    os.makedirs(UPLOAD_DIR)
+
+# --- MODELS (CONTRACTS) ---
 class AudioData(BaseModel):
     userId: str
     audioFormat: str
     timestamp: str
 
-# Directory for uploads
-UPLOAD_DIR = "uploads/"
+class DiagnosisResultContract(BaseModel):
+    userId: str
+    probability: float
+    diagnosis: str
+    timestamp: str
 
-# Ensure the uploads directory exists
-if not os.path.exists(UPLOAD_DIR):
-    os.makedirs(UPLOAD_DIR)
+class UserRegistrationContract(BaseModel):
+    username: str
+    email: str
+    password: str
 
-# Endpoint to upload audio files
-@app.post("/upload-audio", response_model=AudioData)
+class UserLoginContract(BaseModel):
+    username: str
+    password: str
+
+class DiagnosisHistoryContract(BaseModel):
+    userId: str
+    diagnosisHistory: List[DiagnosisResultContract]
+
+class RealTimeFeedbackContract(BaseModel):
+    userId: str
+    feedback: str
+    timestamp: str
+
+class ModelTrainingStatusContract(BaseModel):
+    modelId: str
+    trainingStatus: str
+    accuracy: float
+    timestamp: str
+
+class AdminDiagnosisReviewContract(BaseModel):
+    adminId: str
+    userId: str
+
+# --- ENDPOINTS ---
+
+# 1. Authentication
+@app.post("/test-user-registration", response_model=UserRegistrationContract, tags=["Authentication"])
+async def register_user(user_data: UserRegistrationContract):
+    return user_data
+
+@app.post("/login", response_model=UserLoginContract, tags=["Authentication"])
+async def login_user(credentials: UserLoginContract):
+    return credentials
+
+# 2. Audio & Diagnosis
+@app.post("/upload-audio", response_model=AudioData, tags=["Diagnosis"])
 async def upload_audio(audio_data: AudioData, audio_file: UploadFile = File(...)):
-    file_name = f"{uuid4()}.{audio_data.audioFormat}"  # Unique file name based on UUID
+    file_name = f"{uuid4()}.{audio_data.audioFormat}"
     file_path = os.path.join(UPLOAD_DIR, file_name)
     with open(file_path, "wb") as f:
         f.write(await audio_file.read())
-    
-    # Generating a URL for the uploaded file
-    file_url = f"/uploads/{file_name}"
-    return {"status": "success", "diagnosisResultId": str(uuid4()), "fileUrl": file_url}
+    return audio_data
 
-# Endpoint to get the diagnosis result for a user
-class DiagnosisResultContract(BaseModel):
-    userId: str
-    probability: float  # Probability score, e.g., 0.85 means 85% confidence
-    diagnosis: str  # Diagnosis result, e.g., "Parkinson’s detected" or "No Parkinson's detected"
-    timestamp: str  # Timestamp when the result was generated
-
-@app.get("/get-diagnosis-result/{userId}", response_model=DiagnosisResultContract)
+@app.get("/get-diagnosis-result/{userId}", response_model=DiagnosisResultContract, tags=["Diagnosis"])
 async def get_diagnosis_result(userId: str):
-    return {"status": "success", "result": {"probability": 85.0, "diagnosis": "Parkinson’s detected", "timestamp": "2026-01-17T10:00:00"}}
+    return {"userId": userId, "probability": 85.0, "diagnosis": "Parkinson’s detected", "timestamp": "2026-01-17T10:00:00"}
 
-# Endpoint to serve uploaded files via HTTP
-@app.get("/uploads/{file_name}")
+@app.get("/diagnosis-history/{userId}", response_model=DiagnosisHistoryContract, tags=["User Data"])
+async def get_diagnosis_history(userId: str):
+    return {
+        "userId": userId,
+        "diagnosisHistory": [
+            {"userId": userId, "probability": 85.0, "diagnosis": "Parkinson’s detected", "timestamp": "2026-01-17T10:00:00"}
+        ]
+    }
+
+# 3. System & Admin
+@app.get("/uploads/{file_name}", tags=["System"])
 async def get_uploaded_file(file_name: str):
     file_path = os.path.join(UPLOAD_DIR, file_name)
     if os.path.exists(file_path):
         return FileResponse(file_path)
     return {"error": "File not found"}
 
-# Define the User Registration model (contract)
-class UserRegistrationContract(BaseModel):
-    username: str
-    email: str
-    password: str  # Store hashed passwords in a real application
+@app.get("/model-training-status/{modelId}", response_model=ModelTrainingStatusContract, tags=["System"])
+async def get_model_status(modelId: str):
+    return {"modelId": modelId, "trainingStatus": "Completed", "accuracy": 0.92, "timestamp": "2026-01-17T12:00:00"}
 
-# Define the User Login model (contract)
-class UserLoginContract(BaseModel):
-    username: str
-    password: str
+@app.post("/admin/review-diagnosis", response_model=AdminDiagnosisReviewContract, tags=["Admin"])
+async def review_diagnosis(review: AdminDiagnosisReviewContract):
+    return review
 
-# Define the Diagnosis History model (contract)
-class DiagnosisHistoryContract(BaseModel):
-    userId: str
-    diagnosisHistory: List[DiagnosisResultContract]  # List of past diagnosis results
+@app.post("/real-time-feedback", response_model=RealTimeFeedbackContract, tags=["Feedback"])
+async def real_time_feedback(feedback: RealTimeFeedbackContract):
+    return feedback
 
-# Define the Real-Time Feedback model (contract)
-class RealTimeFeedbackContract(BaseModel):
-    userId: str
-    feedback: str  # Describes feedback, e.g., "Speak louder", "Adjust pitch", etc.
-    timestamp: str  # Timestamp when the feedback was generated
-
-# Define the Model Training Status model (contract)
-class ModelTrainingStatusContract(BaseModel):
-    modelId: str
-    trainingStatus: str  # E.g., "Training", "Completed", "Failed"
-    accuracy: float  # Accuracy metric after training
-    timestamp: str  # Timestamp when the training completed or failed
-
-# Define the Admin Diagnosis Review model (contract)
-class AdminDiagnosisReviewContract(BaseModel):
-    adminId: str
-    userId: str  # Admin who is reviewing the diagnosis and the user being reviewed
-
-# Add a test endpoint to ensure the models are showing in Swagger UI
-@app.post("/test-user-registration", response_model=UserRegistrationContract)
-async def register_user(user_data: UserRegistrationContract):
-    return {"status": "success", "user": user_data}
+# Startup Message
+@app.on_event("startup")
+async def startup_event():
+    print("\n🚀 Server started successfully!")
+    print("📂 Swagger UI: http://127.0.0.1:8000/docs\n")
