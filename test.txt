@@ -1,1 +1,0 @@
-Hello GitHub, this is my first push from VS Code!
