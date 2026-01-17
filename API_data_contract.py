@@ -85,5 +85,4 @@ class ModelTrainingStatusContract(BaseModel):
 class AdminDiagnosisReviewContract(BaseModel):
     adminId: str
     userId: str
-    diagnosisDetails: DiagnosisResultContract  # Diagnosis result details for review
-    reviewStatus: str  # Status of the review, e.g., "Reviewed", "Pending"
+    
