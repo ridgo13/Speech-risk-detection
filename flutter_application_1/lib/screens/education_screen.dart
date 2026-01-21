@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'parkinson_detail_screen.dart';
 
 class EducationScreen extends StatelessWidget {
   const EducationScreen({super.key});
@@ -6,11 +7,11 @@ class EducationScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // -----------------------------------------------------------
-    // ✅ THEME COLORS (Matching the design)
+    // ✅ THEME COLORS
     // -----------------------------------------------------------
     final Color backgroundColor = const Color(0xFFF3EFE4); // Light Beige
-    final Color mainTeal = const Color(0xFF135D66);       // Dark Teal (Titles, Icons)
-    final Color textTeal = const Color(0xFF2C6E76);       // Lighter Teal (Subtitles, Body Text)
+    final Color mainTeal = const Color(0xFF135D66);       // Dark Teal
+    final Color textTeal = const Color(0xFF2C6E76);       // Lighter Teal
     final Color cardShadowColor = Colors.black.withOpacity(0.05);
     // -----------------------------------------------------------
 
@@ -35,118 +36,126 @@ class EducationScreen extends StatelessWidget {
         ),
         centerTitle: true,
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(24.0),
-        child: Column(
-          children: [
-            // --- Top Illustration (Brain, Wave, Book) - NOW BIGGER ---
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 30.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.psychology, size: 90, color: mainTeal.withOpacity(0.3)),
-                  const SizedBox(width: 15),
-                  Icon(Icons.graphic_eq, size: 90, color: mainTeal.withOpacity(0.3)),
-                  const SizedBox(width: 15),
-                  Icon(Icons.menu_book, size: 90, color: mainTeal.withOpacity(0.3)),
-                ],
+      // 👇 FIX 1: Wrapped the entire body in SafeArea
+      body: SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24.0),
+          child: Column(
+            children: [
+              // --- Top Illustration (Brain, Wave, Book) ---
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 30.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.psychology, size: 90, color: mainTeal.withOpacity(0.3)),
+                    const SizedBox(width: 15),
+                    Icon(Icons.graphic_eq, size: 90, color: mainTeal.withOpacity(0.3)),
+                    const SizedBox(width: 15),
+                    Icon(Icons.menu_book, size: 90, color: mainTeal.withOpacity(0.3)),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
+              const SizedBox(height: 20),
 
-            // --- Card 1: What is Parkinson's? ---
-            _buildEducationCard(
-              mainTeal: mainTeal,
-              textTeal: textTeal,
-              shadowColor: cardShadowColor,
-              icon: Icons.psychology,
-              title: "What is Parkinson's?",
-              subtitle: "Understanding early motor signs",
-              onTap: () {
-                // Navigate to detail page
-              },
-            ),
-            const SizedBox(height: 16),
-
-            // --- Card 2: Speech Changes in PD ---
-            _buildEducationCard(
-              mainTeal: mainTeal,
-              textTeal: textTeal,
-              shadowColor: cardShadowColor,
-              icon: Icons.graphic_eq,
-              title: "Speech Changes in PD",
-              subtitle: "Jitter, Shimmer & Pauses",
-              onTap: () {
-                // Navigate to detail page
-              },
-            ),
-            const SizedBox(height: 16),
-
-            // --- Card 3: When to Seek Advise ---
-            _buildEducationCard(
-              mainTeal: mainTeal,
-              textTeal: textTeal,
-              shadowColor: cardShadowColor,
-              icon: Icons.medical_services,
-              title: "When to Seek Advise",
-              subtitle: "Guidance for early intervention",
-              onTap: () {
-                // Navigate to detail page
-              },
-            ),
-            const SizedBox(height: 30),
-
-            // --- "Did You Know?" Box ---
-            Container(
-              padding: const EdgeInsets.all(20.0),
-              decoration: BoxDecoration(
-                color: mainTeal.withOpacity(0.1), // Light teal background
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: mainTeal.withOpacity(0.3)),
+              // --- Card 1: What is Parkinson's? ---
+              _buildEducationCard(
+                mainTeal: mainTeal,
+                textTeal: textTeal,
+                shadowColor: cardShadowColor,
+                icon: Icons.psychology,
+                title: "What is Parkinson's?",
+                subtitle: "Understanding early motor signs",
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const ParkinsonDetailScreen()),
+                  );
+                },
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Icon(Icons.lightbulb_outline, color: mainTeal),
-                      const SizedBox(width: 10),
-                      Text(
-                        'Did You Know ?',
-                        style: TextStyle(
-                          color: mainTeal,
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
+              const SizedBox(height: 16),
+
+              // --- Card 2: Speech Changes in PD ---
+              _buildEducationCard(
+                mainTeal: mainTeal,
+                textTeal: textTeal,
+                shadowColor: cardShadowColor,
+                icon: Icons.graphic_eq,
+                title: "Speech Changes in PD",
+                subtitle: "Jitter, Shimmer & Pauses",
+                onTap: () {
+                  // Navigate to detail page
+                },
+              ),
+              const SizedBox(height: 16),
+
+              // --- Card 3: When to Seek Advise ---
+              _buildEducationCard(
+                mainTeal: mainTeal,
+                textTeal: textTeal,
+                shadowColor: cardShadowColor,
+                icon: Icons.medical_services,
+                title: "When to Seek Advise",
+                subtitle: "Guidance for early intervention",
+                onTap: () {
+                  // Navigate to detail page
+                },
+              ),
+              const SizedBox(height: 30),
+
+              // --- "Did You Know?" Box ---
+              Container(
+                padding: const EdgeInsets.all(20.0),
+                decoration: BoxDecoration(
+                  color: mainTeal.withOpacity(0.1), // Light teal background
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: mainTeal.withOpacity(0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.lightbulb_outline, color: mainTeal),
+                        const SizedBox(width: 10),
+                        Text(
+                          'Did You Know ?',
+                          style: TextStyle(
+                            color: mainTeal,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
                         ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  Text(
-                    'Micro-tremors in voice pitch (Jitter) are often one of the earliest signs of motor decline, appearing before physical tremors.',
-                    style: TextStyle(
-                      color: textTeal,
-                      fontSize: 15,
-                      height: 1.4,
+                      ],
                     ),
-                  ),
-                ],
+                    const SizedBox(height: 10),
+                    Text(
+                      'Micro-tremors in voice pitch (Jitter) are often one of the earliest signs of motor decline, appearing before physical tremors.',
+                      style: TextStyle(
+                        color: textTeal,
+                        fontSize: 15,
+                        height: 1.4,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-            ),
-            const SizedBox(height: 30),
+              const SizedBox(height: 30),
 
-            // --- Footer Text ---
-            Text(
-              'SpeakTrum is not a diagnostic or medical tool.',
-              style: TextStyle(
-                color: textTeal.withOpacity(0.6),
-                fontSize: 13,
+              // --- Footer Text ---
+              Text(
+                'SpeakTrum is not a diagnostic or medical tool.',
+                style: TextStyle(
+                  color: textTeal.withOpacity(0.6),
+                  fontSize: 13,
+                ),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-          ],
+              
+              // 👇 FIX 2: Increased this to 50 so it sits higher up
+              const SizedBox(height: 50), 
+            ],
+          ),
         ),
       ),
     );

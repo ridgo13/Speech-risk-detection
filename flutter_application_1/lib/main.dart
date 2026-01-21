@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'screens/education_screen.dart'; 
+import 'screens/profile_screen.dart';
+
 // import 'screens/login_design.dart'; // (You can keep this here, just don't use it yet)
 
 void main() {
@@ -15,7 +17,7 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       
       // 👇 2. CHANGE THIS LINE TO POINT TO THE EDUCATION SCREEN
-      home: const EducationScreen(), 
+      home: const ProfileScreen(), 
     );
   }
 }
