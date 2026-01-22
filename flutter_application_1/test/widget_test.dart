@@ -1,30 +1,19 @@
-// This is a basic Flutter widget test.
-//
-// To perform an interaction with a widget in your test, use the WidgetTester
-// utility in the flutter_test package. For example, you can send tap and scroll
-// gestures. You can also use WidgetTester to find child widgets in the widget
-// tree, read text, and verify that the values of widget properties are correct.
-
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:flutter_application_1/main.dart';
+// ✅ Make sure this matches your project name!
+import 'package:flutter_application_1/main.dart'; 
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
-    await tester.pumpWidget(const MyApp());
+  testWidgets('App launch smoke test', (WidgetTester tester) async {
+    // 1. Build our app (SpeakTrumApp, not MyApp)
+    await tester.pumpWidget(const SpeakTrumApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
-
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
-
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    // 2. Verify that the app actually loads
+    // We look for the "Education" title since that is your home screen now.
+    expect(find.text('Education'), findsOneWidget);
+    
+    // 3. Verify we verify the "What is Parkinson's?" card exists
+    expect(find.text("What is Parkinson's?"), findsOneWidget);
   });
 }

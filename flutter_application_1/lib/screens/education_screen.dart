@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../app_colors.dart'; 
 import 'parkinson_detail_screen.dart';
 
 class EducationScreen extends StatelessWidget {
@@ -6,166 +7,157 @@ class EducationScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // -----------------------------------------------------------
-    // ✅ THEME COLORS
-    // -----------------------------------------------------------
-    final Color backgroundColor = const Color(0xFFF3EFE4); // Light Beige
-    final Color mainTeal = const Color(0xFF135D66);       // Dark Teal
-    final Color textTeal = const Color(0xFF2C6E76);       // Lighter Teal
-    final Color cardShadowColor = Colors.black.withOpacity(0.05);
-    // -----------------------------------------------------------
+    // Get screen height to scale layout dynamically
+    final double screenHeight = MediaQuery.of(context).size.height;
+    final bool isSmallScreen = screenHeight < 700; 
 
     return Scaffold(
-      backgroundColor: backgroundColor,
+      backgroundColor: AppColors.background, 
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: mainTeal),
-          onPressed: () {
-            Navigator.pop(context); // Go back to the previous screen
-          },
+          icon: Icon(Icons.arrow_back, color: AppColors.mainTeal),
+          onPressed: () => Navigator.pop(context),
         ),
         title: Text(
           'Education',
           style: TextStyle(
-            color: mainTeal,
+            color: AppColors.mainTeal, 
             fontSize: 22,
             fontWeight: FontWeight.bold,
           ),
         ),
         centerTitle: true,
       ),
-      // 👇 FIX 1: Wrapped the entire body in SafeArea
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(24.0),
-          child: Column(
-            children: [
-              // --- Top Illustration (Brain, Wave, Book) ---
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 30.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.psychology, size: 90, color: mainTeal.withOpacity(0.3)),
-                    const SizedBox(width: 15),
-                    Icon(Icons.graphic_eq, size: 90, color: mainTeal.withOpacity(0.3)),
-                    const SizedBox(width: 15),
-                    Icon(Icons.menu_book, size: 90, color: mainTeal.withOpacity(0.3)),
-                  ],
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              // Allow scrolling ONLY if the screen is really small
+              physics: const ClampingScrollPhysics(), 
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  minHeight: constraints.maxHeight,
                 ),
-              ),
-              const SizedBox(height: 20),
-
-              // --- Card 1: What is Parkinson's? ---
-              _buildEducationCard(
-                mainTeal: mainTeal,
-                textTeal: textTeal,
-                shadowColor: cardShadowColor,
-                icon: Icons.psychology,
-                title: "What is Parkinson's?",
-                subtitle: "Understanding early motor signs",
-                onTap: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(builder: (context) => const ParkinsonDetailScreen()),
-                  );
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // --- Card 2: Speech Changes in PD ---
-              _buildEducationCard(
-                mainTeal: mainTeal,
-                textTeal: textTeal,
-                shadowColor: cardShadowColor,
-                icon: Icons.graphic_eq,
-                title: "Speech Changes in PD",
-                subtitle: "Jitter, Shimmer & Pauses",
-                onTap: () {
-                  // Navigate to detail page
-                },
-              ),
-              const SizedBox(height: 16),
-
-              // --- Card 3: When to Seek Advise ---
-              _buildEducationCard(
-                mainTeal: mainTeal,
-                textTeal: textTeal,
-                shadowColor: cardShadowColor,
-                icon: Icons.medical_services,
-                title: "When to Seek Advise",
-                subtitle: "Guidance for early intervention",
-                onTap: () {
-                  // Navigate to detail page
-                },
-              ),
-              const SizedBox(height: 30),
-
-              // --- "Did You Know?" Box ---
-              Container(
-                padding: const EdgeInsets.all(20.0),
-                decoration: BoxDecoration(
-                  color: mainTeal.withOpacity(0.1), // Light teal background
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: mainTeal.withOpacity(0.3)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.lightbulb_outline, color: mainTeal),
-                        const SizedBox(width: 10),
-                        Text(
-                          'Did You Know ?',
-                          style: TextStyle(
-                            color: mainTeal,
-                            fontSize: 18,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      'Micro-tremors in voice pitch (Jitter) are often one of the earliest signs of motor decline, appearing before physical tremors.',
-                      style: TextStyle(
-                        color: textTeal,
-                        fontSize: 15,
-                        height: 1.4,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 10),
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween, // 🚀 Distribute space to fill screen
+                    children: [
+                      // --- Top Illustration ---
+                      // Icon size adapts: 60 on small phones, 70 on regular
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.psychology, size: isSmallScreen ? 60 : 70, color: AppColors.mainTeal.withOpacity(0.3)),
+                          const SizedBox(width: 15),
+                          Icon(Icons.graphic_eq, size: isSmallScreen ? 60 : 70, color: AppColors.mainTeal.withOpacity(0.3)),
+                          const SizedBox(width: 15),
+                          Icon(Icons.menu_book, size: isSmallScreen ? 60 : 70, color: AppColors.mainTeal.withOpacity(0.3)),
+                        ],
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 30),
+                      
+                      const SizedBox(height: 10),
 
-              // --- Footer Text ---
-              Text(
-                'SpeakTrum is not a diagnostic or medical tool.',
-                style: TextStyle(
-                  color: textTeal.withOpacity(0.6),
-                  fontSize: 13,
+                      // --- BIGGER CARDS Section ---
+                      Column(
+                        children: [
+                          _buildEducationCard(
+                            icon: Icons.psychology,
+                            title: "What is Parkinson's?",
+                            subtitle: "Understanding early signs",
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => const ParkinsonDetailScreen()),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12), // Small gap between cards
+
+                          _buildEducationCard(
+                            icon: Icons.graphic_eq,
+                            title: "Speech Changes",
+                            subtitle: "Jitter, Shimmer & Pauses",
+                            onTap: () {},
+                          ),
+                          const SizedBox(height: 12),
+
+                          _buildEducationCard(
+                            icon: Icons.medical_services,
+                            title: "When to Seek Advice",
+                            subtitle: "Early intervention guide",
+                            onTap: () {},
+                          ),
+                        ],
+                      ),
+                      
+                      const SizedBox(height: 15),
+
+                      // --- "Did You Know?" Box ---
+                      Container(
+                        padding: const EdgeInsets.all(16.0),
+                        decoration: BoxDecoration(
+                          color: AppColors.mainTeal.withOpacity(0.1), 
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: AppColors.borderColor, width: AppColors.borderWidth),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.lightbulb_outline, color: AppColors.mainTeal, size: 22),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Did You Know?',
+                                  style: TextStyle(
+                                    color: AppColors.mainTeal, 
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              'Micro-tremors in voice pitch (Jitter) often appear before physical tremors.',
+                              style: TextStyle(
+                                color: AppColors.textTeal, 
+                                fontSize: 14,
+                                height: 1.3,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      
+                      const SizedBox(height: 10),
+
+                      // --- Footer Text ---
+                      Text(
+                        'SpeakTrum is not a diagnostic tool.',
+                        style: TextStyle(
+                          color: AppColors.textTeal.withOpacity(0.6),
+                          fontSize: 12,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                      const SizedBox(height: 5),
+                    ],
+                  ),
                 ),
-                textAlign: TextAlign.center,
               ),
-              
-              // 👇 FIX 2: Increased this to 50 so it sits higher up
-              const SizedBox(height: 50), 
-            ],
-          ),
+            );
+          }
         ),
       ),
     );
   }
 
-  // --- Helper Widget for the Education Cards ---
+  // --- Helper Widget (Bigger Cards) ---
   Widget _buildEducationCard({
-    required Color mainTeal,
-    required Color textTeal,
-    required Color shadowColor,
     required IconData icon,
     required String title,
     required String subtitle,
@@ -173,14 +165,16 @@ class EducationScreen extends StatelessWidget {
   }) {
     return Container(
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
+        color: AppColors.cardColor, 
+        borderRadius: BorderRadius.circular(16), 
+        border: Border.all(color: AppColors.borderColor, width: AppColors.borderWidth), 
         boxShadow: [
-          BoxShadow(
-            color: shadowColor,
-            blurRadius: 15,
-            offset: const Offset(0, 5),
-          ),
+          if (AppColors.cardColor == Colors.white)
+            BoxShadow(
+              color: Colors.black.withOpacity(0.05),
+              blurRadius: 10,
+              offset: const Offset(0, 3),
+            ),
         ],
       ),
       child: Material(
@@ -189,20 +183,19 @@ class EducationScreen extends StatelessWidget {
           onTap: onTap,
           borderRadius: BorderRadius.circular(16),
           child: Padding(
-            padding: const EdgeInsets.all(20.0),
+            // 🚀 INCREASED PADDING: Makes the card taller and bigger
+            padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 22), 
             child: Row(
               children: [
-                // Circular Icon
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: mainTeal.withOpacity(0.1),
+                    color: AppColors.mainTeal.withOpacity(0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: Icon(icon, color: mainTeal, size: 28),
+                  child: Icon(icon, color: AppColors.mainTeal, size: 28), // Slightly bigger icon
                 ),
                 const SizedBox(width: 16),
-                // Text Content
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -210,8 +203,8 @@ class EducationScreen extends StatelessWidget {
                       Text(
                         title,
                         style: TextStyle(
-                          color: mainTeal,
-                          fontSize: 17,
+                          color: AppColors.mainTeal, 
+                          fontSize: 18, // Bigger Title
                           fontWeight: FontWeight.bold,
                         ),
                       ),
@@ -219,15 +212,14 @@ class EducationScreen extends StatelessWidget {
                       Text(
                         subtitle,
                         style: TextStyle(
-                          color: textTeal,
-                          fontSize: 14,
+                          color: AppColors.textTeal, 
+                          fontSize: 14, // Readable subtitle
                         ),
                       ),
                     ],
                   ),
                 ),
-                // Arrow Icon
-                Icon(Icons.arrow_forward_ios, color: textTeal, size: 18),
+                Icon(Icons.arrow_forward_ios, color: AppColors.textTeal, size: 16),
               ],
             ),
           ),

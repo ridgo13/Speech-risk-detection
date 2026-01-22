@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import '../app_colors.dart'; 
+import 'settings_screen.dart';
+import 'privacy_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
@@ -6,56 +9,43 @@ class ProfileScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     // -----------------------------------------------------------
-    // ✅ COMPACT THEME SETTINGS
+    // 🎨 TEXT STYLES 
     // -----------------------------------------------------------
-    final Color backgroundColor = const Color(0xFFF3EFE4);
-    final Color mainTeal = const Color(0xFF135D66);
-    final Color textTeal = const Color(0xFF2C6E76);
-    final Color redColor = const Color(0xFFD32F2F);
-
-    // Font Styles (Tuned for Pixel 5 density)
     final TextStyle nameStyle = TextStyle(
-      color: mainTeal, fontSize: 22, fontWeight: FontWeight.bold,
+      color: AppColors.mainTeal, 
+      fontSize: 22, 
+      fontWeight: FontWeight.bold,
     );
     final TextStyle emailStyle = TextStyle(
-      color: textTeal, fontSize: 14,
+      color: AppColors.textTeal, 
+      fontSize: 14,
     );
-    final TextStyle cardLabelStyle = TextStyle(
-      color: mainTeal, fontSize: 13,
-    );
-    final TextStyle cardValueStyle = TextStyle(
-      color: mainTeal, fontSize: 26, fontWeight: FontWeight.bold,
-    );
-    final TextStyle menuButtonStyle = TextStyle(
-      color: mainTeal, fontSize: 16, fontWeight: FontWeight.w600,
-    );
+    
     // -----------------------------------------------------------
+    // 📦 CARD STYLES
+    // -----------------------------------------------------------
+    final TextStyle cardLabelStyle = TextStyle(fontSize: 13);
+    final TextStyle cardValueStyle = TextStyle(fontSize: 26, fontWeight: FontWeight.bold);
+    final TextStyle menuButtonStyle = TextStyle(fontSize: 16, fontWeight: FontWeight.w600);
 
     return Scaffold(
-      backgroundColor: backgroundColor,
-      // Short AppBar to save vertical space
+      backgroundColor: AppColors.background, 
       appBar: AppBar(
         backgroundColor: Colors.transparent,
         elevation: 0,
         toolbarHeight: 45, 
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: mainTeal),
+          icon: Icon(Icons.arrow_back, color: AppColors.mainTeal), 
           onPressed: () => Navigator.pop(context),
         ),
       ),
-      // ✅ COLUMN WITH EXPANDED: GUARANTEES ONE SCREEN FIT
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24.0),
           child: Column(
             children: [
-              // ========================================================
-              // PART 1: DYNAMIC CONTENT AREA
-              // (Uses "Expanded" to fill available space evenly)
-              // ========================================================
               Expanded(
                 child: Column(
-                  // 👇 THIS IS THE KEY: Distributes items evenly so they never overlap
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly, 
                   children: [
                     // --- 1. Profile Section ---
@@ -66,18 +56,20 @@ class ProfileScreen extends StatelessWidget {
                           children: [
                             Container(
                               width: 90, height: 90,
-                              decoration: const BoxDecoration(
-                                shape: BoxShape.circle, color: Colors.white,
+                              decoration: BoxDecoration(
+                                shape: BoxShape.circle, 
+                                color: AppColors.cardColor, // Black in HC
+                                border: Border.all(color: AppColors.borderColor, width: AppColors.borderWidth),
                               ),
-                              child: Icon(Icons.person_outline, size: 50, color: mainTeal),
+                              child: Icon(Icons.person_outline, size: 50, color: AppColors.cardTextColor),
                             ),
                             Container(
                               padding: const EdgeInsets.all(6),
                               decoration: BoxDecoration(
-                                color: mainTeal, shape: BoxShape.circle,
-                                border: Border.all(color: backgroundColor, width: 2),
+                                color: AppColors.mainTeal, shape: BoxShape.circle,
+                                border: Border.all(color: AppColors.background, width: 2),
                               ),
-                              child: const Icon(Icons.edit, size: 14, color: Colors.white),
+                              child: Icon(Icons.edit, size: 14, color: AppColors.background), // Contrast Icon
                             ),
                           ],
                         ),
@@ -95,7 +87,6 @@ class ProfileScreen extends StatelessWidget {
                             icon: Icons.show_chart,
                             label: "Screenings",
                             value: "12",
-                            mainTeal: mainTeal,
                             labelStyle: cardLabelStyle,
                             valueStyle: cardValueStyle,
                           ),
@@ -106,7 +97,6 @@ class ProfileScreen extends StatelessWidget {
                             icon: Icons.calendar_today,
                             label: "Check-up",
                             value: "Oct24",
-                            mainTeal: mainTeal,
                             labelStyle: cardLabelStyle,
                             valueStyle: cardValueStyle,
                           ),
@@ -119,17 +109,26 @@ class ProfileScreen extends StatelessWidget {
                       children: [
                         _buildMenuButton(
                           icon: Icons.shield_outlined, text: "Data & Privacy",
-                          mainTeal: mainTeal, style: menuButtonStyle,
+                          style: menuButtonStyle,
+                          onTap: () {
+                             Navigator.push(context, MaterialPageRoute(builder: (context) => const PrivacyScreen()));
+                          },
                         ),
                         const SizedBox(height: 12),
+                        
                         _buildMenuButton(
                           icon: Icons.settings_outlined, text: "Settings",
-                          mainTeal: mainTeal, style: menuButtonStyle,
+                          style: menuButtonStyle,
+                          onTap: () {
+                             Navigator.push(context, MaterialPageRoute(builder: (context) => const SettingsScreen()));
+                          },
                         ),
+                        
                         const SizedBox(height: 12),
                         _buildMenuButton(
                           icon: Icons.headset_mic_outlined, text: "Help & Support",
-                          mainTeal: mainTeal, style: menuButtonStyle,
+                          style: menuButtonStyle,
+                          onTap: () {},
                         ),
                       ],
                     ),
@@ -137,38 +136,35 @@ class ProfileScreen extends StatelessWidget {
                 ),
               ),
 
-              // ========================================================
-              // PART 2: FOOTER AREA (Fixed at bottom)
-              // ========================================================
+              // --- Footer Area ---
               Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   const SizedBox(height: 10),
-                  // Log Out Button
                   SizedBox(
                     width: double.infinity,
                     height: 50,
                     child: OutlinedButton(
                       style: OutlinedButton.styleFrom(
-                        side: BorderSide(color: redColor),
+                        side: BorderSide(color: AppColors.redColor, width: 2),
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        backgroundColor: redColor.withOpacity(0.05),
+                        backgroundColor: AppColors.redColor.withOpacity(0.1),
                       ),
                       onPressed: () {},
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          Icon(Icons.logout, color: redColor, size: 22),
+                          Icon(Icons.logout, color: AppColors.redColor, size: 22),
                           const SizedBox(width: 10),
-                          Text("Log Out", style: TextStyle(color: redColor, fontSize: 16, fontWeight: FontWeight.bold)),
+                          Text("Log Out", style: TextStyle(color: AppColors.redColor, fontSize: 16, fontWeight: FontWeight.bold)),
                         ],
                       ),
                     ),
                   ),
                   const SizedBox(height: 15),
-                  Text("SpeakTrum", style: TextStyle(color: mainTeal, fontWeight: FontWeight.bold, fontSize: 16)),
-                  Text("Version 1.0", style: TextStyle(color: textTeal.withOpacity(0.6), fontSize: 12, fontWeight: FontWeight.bold)),
-                  const SizedBox(height: 5), // Small buffer from bottom edge
+                  Text("SpeakTrum", style: TextStyle(color: AppColors.mainTeal, fontWeight: FontWeight.bold, fontSize: 16)),
+                  Text("Version 1.0", style: TextStyle(color: AppColors.textTeal.withOpacity(0.6), fontSize: 12, fontWeight: FontWeight.bold)),
+                  const SizedBox(height: 5),
                 ],
               ),
             ],
@@ -181,22 +177,26 @@ class ProfileScreen extends StatelessWidget {
   // --- Helper: Stat Card ---
   Widget _buildStatCard({
     required IconData icon, required String label, required String value,
-    required Color mainTeal, required TextStyle labelStyle, required TextStyle valueStyle,
+    required TextStyle labelStyle, required TextStyle valueStyle,
   }) {
+    // ✅ Use cardTextColor (White in HC)
+    final Color contentColor = AppColors.cardTextColor; 
+
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.cardColor, // Black in HC
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+        border: Border.all(color: AppColors.borderColor, width: AppColors.borderWidth),
+        boxShadow: [BoxShadow(color: Colors.white.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Column(
         children: [
-          Icon(icon, color: mainTeal, size: 26),
+          Icon(icon, color: contentColor, size: 26), 
           const SizedBox(height: 8),
-          Text(label, style: labelStyle, textAlign: TextAlign.center),
+          Text(label, style: labelStyle.copyWith(color: contentColor), textAlign: TextAlign.center),
           const SizedBox(height: 2),
-          Text(value, style: valueStyle),
+          Text(value, style: valueStyle.copyWith(color: contentColor)),
         ],
       ),
     );
@@ -205,29 +205,32 @@ class ProfileScreen extends StatelessWidget {
   // --- Helper: Menu Button ---
   Widget _buildMenuButton({
     required IconData icon, required String text,
-    required Color mainTeal, required TextStyle style,
+    required TextStyle style,
+    required VoidCallback onTap, 
   }) {
+    final Color contentColor = AppColors.cardTextColor; 
+
     return Container(
       height: 52,
       decoration: BoxDecoration(
-        color: Colors.white,
+        color: AppColors.cardColor,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, 2))],
-        border: Border.all(color: mainTeal, width: 1.5),
+        boxShadow: [BoxShadow(color: Colors.white.withOpacity(0.05), blurRadius: 5, offset: const Offset(0, 2))],
+        border: Border.all(color: AppColors.borderColor, width: AppColors.borderWidth),
       ),
       child: Material(
         color: Colors.transparent,
         child: InkWell(
-          onTap: () {},
+          onTap: onTap,
           borderRadius: BorderRadius.circular(16),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16),
             child: Row(
               children: [
-                Icon(icon, color: mainTeal, size: 24),
+                Icon(icon, color: contentColor, size: 24), 
                 const SizedBox(width: 16),
-                Expanded(child: Text(text, style: style)),
-                Icon(Icons.arrow_forward_ios, size: 16, color: mainTeal),
+                Expanded(child: Text(text, style: style.copyWith(color: contentColor))), 
+                Icon(Icons.arrow_forward_ios, size: 16, color: contentColor), 
               ],
             ),
           ),
