@@ -205,3 +205,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+# --- SpeakTrum Project Specific ---
+raw_data/
+processed_data/
+*.wav
+*.mp3

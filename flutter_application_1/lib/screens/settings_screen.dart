@@ -141,7 +141,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           Switch(
             value: value,
-            activeColor: activeDot,       
+            activeThumbColor: activeDot,       
             activeTrackColor: activeTrack, 
             inactiveThumbColor: Colors.white,
             inactiveTrackColor: isHC ? Colors.grey : Colors.grey.shade300,
