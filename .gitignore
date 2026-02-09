@@ -210,3 +210,8 @@ raw_data/
 processed_data/
 *.wav
 *.mp3
+# --- SpeakTrum Security (CRITICAL) ---
+backend_scripts/service_account.json
+uploads/
+spectrograms/
+processed_audio/

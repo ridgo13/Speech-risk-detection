@@ -1,3 +1,5 @@
+import matplotlib
+matplotlib.use('Agg')
 import librosa
 import librosa.display
 import numpy as np
