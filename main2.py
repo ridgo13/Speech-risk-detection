@@ -12,43 +12,40 @@ import aiofiles
 from passlib.context import CryptContext
 import psycopg2
 from psycopg2.extras import RealDictCursor
-from google.cloud import storage 
+from google.cloud import storage
 
 # =========================================================
 # CONFIGURATION & ENVIRONMENT
 # =========================================================
-load_dotenv() 
+load_dotenv()
 
-app = FastAPI(title="SpeakTrum – Speech Risk Detection API")
+app = FastAPI(title="SpeakTrum – Secure Healthcare API")
 
-# Setup Folders
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-ALLOWED_AUDIO_EXTENSIONS = {"wav", "mp3", "m4a", "flac"} 
+ALLOWED_AUDIO_EXTENSIONS = {"wav", "mp3", "m4a", "flac"}
 
-# SECURITY CONFIG
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_for_development_only")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
-# --- GOOGLE CLOUD STORAGE CONFIG (UPDATED FOR BOTH BUCKETS) ---
-RAW_BUCKET_NAME = "speaktrum-raw-audio"          # <--- Bucket 1 (Originals)
-PROCESSED_BUCKET_NAME = "speaktrum-processed-data" # <--- Bucket 2 (Cleaned/Spectrograms)
+RAW_BUCKET_NAME = "speaktrum-raw-audio"
+PROCESSED_BUCKET_NAME = "speaktrum-processed-data"
 KEY_PATH = "backend_scripts/service_account.json" 
 
 # =========================================================
-# IMPORT PARISHAD'S ETL MODULES
+# IMPORT AI MODULES
 # =========================================================
 try:
     from backend_scripts.etl_pipeline import AudioETL
     from backend_scripts.feature_extractor import generate_mel_spectrogram
 except ImportError as e:
-    print(f"\n⚠️ IMPORT ERROR: {e}")
+    print(f"⚠️ AI MODULE IMPORT ERROR: {e}")
 
 # =========================================================
-# DATABASE CONNECTION HELPER
+# DATABASE & SECURE HELPER FUNCTIONS
 # =========================================================
 def get_db_connection():
     try:
@@ -64,23 +61,32 @@ def get_db_connection():
         print(f"❌ Database Connection Failed: {e}")
         return None
 
-# =========================================================
-# GCS UPLOAD FUNCTION (UPDATED TO ACCEPT BUCKET NAME)
-# =========================================================
+def generate_secure_url(bucket_name, blob_name):
+    """Generates a temporary Signed URL (Valid for 15 minutes)."""
+    try:
+        storage_client = storage.Client.from_service_account_json(KEY_PATH)
+        bucket = storage_client.bucket(bucket_name)
+        blob = bucket.blob(blob_name)
+
+        url = blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=15),
+            method="GET",
+        )
+        return url
+    except Exception as e:
+        print(f"❌ Signed URL Error: {e}")
+        return None
+
 def upload_to_gcs(local_file_path, destination_blob_name, bucket_name):
-    """Uploads a file to a SPECIFIC bucket."""
     try:
         if not os.path.exists(KEY_PATH):
-            print(f"⚠️ SKIPPING GCS: Key not found at {KEY_PATH}")
             return None
-
         storage_client = storage.Client.from_service_account_json(KEY_PATH)
-        bucket = storage_client.bucket(bucket_name) # <--- Uses the specific bucket
+        bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(destination_blob_name)
-
         blob.upload_from_filename(local_file_path)
-        print(f"☁️ UPLOADED to {bucket_name}: {destination_blob_name}")
-        return blob.public_url
+        return destination_blob_name  # We save the PATH, not the URL
     except Exception as e:
         print(f"❌ GCS UPLOAD FAILED: {e}")
         return None
@@ -88,227 +94,128 @@ def upload_to_gcs(local_file_path, destination_blob_name, bucket_name):
 # =========================================================
 # SECURITY & AUTHENTICATION
 # =========================================================
-DIAGNOSIS_RESULTS_DB = {} 
-
-def get_user_from_db(username: str):
-    conn = get_db_connection()
-    if not conn: return None
-    try:
-        cur = conn.cursor()
-        cur.execute("SELECT * FROM users WHERE username = %s", (username,))
-        user = cur.fetchone()
-        return user
-    except Exception as e:
-        print(f"DB Error: {e}")
-        return None
-    finally:
-        if conn: conn.close()
-
-def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
+def create_access_token(data: dict):
     to_encode = data.copy()
-    expire = datetime.utcnow() + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    expire = datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username = payload.get("sub")
-        if not username: raise HTTPException(status_code=401, detail="Invalid token")
-            
-        user = get_user_from_db(username)
-        if not user: raise HTTPException(status_code=401, detail="User not found")
+        user_id: str = payload.get("sub")
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, username, email FROM users WHERE user_id = %s", (user_id,))
+        user = cur.fetchone()
+        conn.close()
         return user
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=401, detail="Invalid authentication")
+    except:
+        raise HTTPException(status_code=401, detail="Authentication failed")
 
 # =========================================================
-# DATA MODELS
+# BACKGROUND PIPELINE
 # =========================================================
-class UserRegistrationContract(BaseModel):
-    username: str
-    email: EmailStr
-    password: str = Field(min_length=6)
-
-class DiagnosisResultContract(BaseModel):
-    userId: str
-    probability: float
-    diagnosis: str
-    timestamp: datetime
-
-class DiagnosisHistoryContract(BaseModel):
-    userId: str
-    diagnosisHistory: List[DiagnosisResultContract]
-
-# =========================================================
-# PARISHAD'S ETL COORDINATOR
-# =========================================================
-def run_parishad_etl(file_path: str, user_id: str):
-    print(f"🔄 ETL: Starting pipeline for {file_path}...")
-    
-    # 1. Setup Paths
+def run_audio_processing_pipeline(file_path: str, user_id: str):
     directory = os.path.dirname(file_path)
     original_filename = os.path.basename(file_path)
     filename_stem = os.path.splitext(original_filename)[0]
-    
-    clean_filename = f"cleaned_{original_filename}"
-    clean_path = os.path.join(directory, clean_filename)
-    
+    clean_path = os.path.join(directory, f"cleaned_{original_filename}")
+
     try:
-        # 2. Run Cleaning
-        etl_engine = AudioETL() 
-        success_clean = etl_engine.run_pipeline(file_path, clean_path)
-        
-        if not success_clean:
-            print("❌ ETL STOPPED: Audio failed quality check.")
-            return
-            
-        print(f"✅ ETL CLEANED: Saved locally to {clean_path}")
-
-        # 3. Run Feature Extraction
-        success_feature = generate_mel_spectrogram(clean_path, directory, filename_stem)
-        
-        if success_feature:
-            print(f"✅ ETL FEATURES: Spectrogram generated")
-            
-            # --- 4. CLOUD UPLOAD (PROCESSED BUCKET) ---
-            print("🚀 Starting Processed Uploads...")
-            
-            # Upload Cleaned Audio -> PROCESSED BUCKET
-            gcs_audio_name = f"processed_audio/{user_id}/{clean_filename}"
-            upload_to_gcs(clean_path, gcs_audio_name, PROCESSED_BUCKET_NAME)
-            
-            # Upload Spectrogram -> PROCESSED BUCKET
-            image_local_path = os.path.join(directory, f"{filename_stem}.png")
-            if os.path.exists(image_local_path):
-                gcs_image_name = f"spectrograms/{user_id}/{filename_stem}.png"
-                upload_to_gcs(image_local_path, gcs_image_name, PROCESSED_BUCKET_NAME)
+        if 'AudioETL' in globals():
+            etl_engine = AudioETL()
+            if etl_engine.run_pipeline(file_path, clean_path):
+                generate_mel_spectrogram(clean_path, directory, filename_stem)
                 
-            print("✨ ETL COMPLETE: Cleaned files sent to Processed Bucket.")
-            
-        else:
-            print("❌ ETL ERROR: Could not generate spectrogram.")
-
+                # Upload and Save Path
+                proc_path = upload_to_gcs(clean_path, f"processed/{user_id}/cleaned_{original_filename}", PROCESSED_BUCKET_NAME)
+                spec_path = upload_to_gcs(os.path.join(directory, f"{filename_stem}.png"), f"spectrograms/{user_id}/{filename_stem}.png", PROCESSED_BUCKET_NAME)
+                
+                conn = get_db_connection()
+                if conn:
+                    cur = conn.cursor()
+                    cur.execute(
+                        "UPDATE voice_recordings SET processed_url = %s, spectrogram_url = %s WHERE file_path = %s",
+                        (proc_path, spec_path, file_path)
+                    )
+                    conn.commit()
+                    conn.close()
     except Exception as e:
-        print(f"❌ PIPELINE ERROR: {str(e)}")
+        print(f"❌ ETL Error: {e}")
 
 # =========================================================
 # API ENDPOINTS
 # =========================================================
 
-@app.post("/test-user-registration", tags=["Authentication"])
-async def register_user(user_data: UserRegistrationContract):
+@app.post("/register", tags=["Auth"])
+async def register(username: str = Form(...), email: str = Form(...), password: str = Form(...)):
     conn = get_db_connection()
-    if not conn: raise HTTPException(500, "DB Connection Error")
-    try:
-        cur = conn.cursor()
-        hashed = pwd_context.hash(user_data.password)
-        cur.execute("INSERT INTO users (username, email, hashed_password) VALUES (%s, %s, %s)",
-                    (user_data.username, user_data.email, hashed))
-        conn.commit()
-        return {"message": "User registered permanently in DB!"}
-    except psycopg2.errors.UniqueViolation:
-        conn.rollback()
-        raise HTTPException(status_code=400, detail="User already exists")
-    finally:
-        conn.close()
+    cur = conn.cursor()
+    new_uuid = str(uuid4())
+    hashed = pwd_context.hash(password)
+    cur.execute("INSERT INTO users (user_id, username, email, hashed_password) VALUES (%s,%s,%s,%s)", (new_uuid, username, email, hashed))
+    conn.commit()
+    conn.close()
+    return {"user_id": new_uuid}
 
-@app.post("/login", tags=["Authentication"])
-async def login_user(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = get_user_from_db(form_data.username)
+@app.post("/login", tags=["Auth"])
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT user_id, hashed_password FROM users WHERE username = %s", (form_data.username,))
+    user = cur.fetchone()
+    conn.close()
     if not user or not pwd_context.verify(form_data.password, user["hashed_password"]):
-        raise HTTPException(status_code=401, detail="Invalid credentials")
-    token = create_access_token({"sub": user["username"]})
-    return {"access_token": token, "token_type": "bearer"}
+        raise HTTPException(401, "Invalid credentials")
+    return {"access_token": create_access_token({"sub": user["user_id"]}), "token_type": "bearer"}
 
-@app.post("/upload-audio", tags=["Diagnosis"], status_code=202)
+@app.post("/upload-audio", tags=["Main"])
 async def upload_audio(
     audioFormat: str = Form(...),
-    timestamp: datetime = Form(...), 
+    timestamp: datetime = Form(...),
     audio_file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: dict = Depends(get_current_user)
 ):
-    # 1. Validate
     ext = audio_file.filename.split(".")[-1].lower()
-    if ext not in ALLOWED_AUDIO_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="Unsupported audio format")
+    file_id = str(uuid4())
+    local_path = os.path.join(UPLOAD_DIR, f"{file_id}.{ext}")
 
-    # 2. Save Raw File to Disk
-    file_name = f"{uuid4()}.{ext}"
-    file_path = os.path.join(UPLOAD_DIR, file_name)
+    async with aiofiles.open(local_path, "wb") as f:
+        while chunk := await audio_file.read(1024*1024):
+            await f.write(chunk)
 
-    try:
-        async with aiofiles.open(file_path, "wb") as out_file:
-            while chunk := await audio_file.read(1024 * 1024):
-                await out_file.write(chunk)
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"File save failed: {str(e)}")
+    gcs_path = f"raw/{current_user['user_id']}/{file_id}.{ext}"
+    upload_to_gcs(local_path, gcs_path, RAW_BUCKET_NAME)
 
-    # --- 3. UPLOAD RAW TO GCS (NEW!) ---
-    # We do this immediately so the original is safe in the RAW bucket
-    print("🚀 Uploading Original to Raw Bucket...")
-    raw_gcs_path = f"raw_uploads/{current_user['username']}/{file_name}"
-    upload_to_gcs(file_path, raw_gcs_path, RAW_BUCKET_NAME)
-
-    # 4. Save Info to Database
     conn = get_db_connection()
-    if conn:
-        try:
-            cur = conn.cursor()
-            insert_query = """
-            INSERT INTO voice_recordings (user_id, file_path, audio_format, created_at)
-            VALUES (%s, %s, %s, %s)
-            """
-            cur.execute(insert_query, (current_user["username"], file_path, audioFormat, timestamp))
-            conn.commit()
-            conn.close()
-            print(f"✅ DB SUCCESS: Metadata saved.")
-        except Exception as db_e:
-            print(f"❌ DB ERROR: {db_e}")
+    cur = conn.cursor()
+    cur.execute(
+        "INSERT INTO voice_recordings (user_id, file_path, audio_format, created_at, raw_url) VALUES (%s,%s,%s,%s,%s)",
+        (current_user["user_id"], local_path, audioFormat, timestamp, gcs_path)
+    )
+    conn.commit()
+    conn.close()
 
-    # 5. Trigger ETL (Clean & Process)
-    background_tasks.add_task(run_parishad_etl, file_path, current_user["username"])
+    background_tasks.add_task(run_audio_processing_pipeline, local_path, current_user["user_id"])
+    return {"status": "Processing"}
 
-    # 6. Mock Result
-    mock_result = {
-        "userId": current_user["username"],
-        "probability": 0.87,
-        "diagnosis": "Parkinson’s risk detected",
-        "timestamp": datetime.utcnow()
-    }
-    DIAGNOSIS_RESULTS_DB.setdefault(current_user["username"], []).append(mock_result)
-
-    return {
-        "message": "Audio received. Raw upload complete. ETL started.",
-        "file_id": file_name,
-        "user": current_user["username"]
-    }
-
-@app.get("/get-diagnosis-result/{userId}", response_model=DiagnosisResultContract, tags=["Diagnosis"])
-async def get_diagnosis_result(userId: str, current_user: dict = Depends(get_current_user)):
-    if userId != current_user["username"]: raise HTTPException(403, "Access denied")
-    if userId not in DIAGNOSIS_RESULTS_DB: raise HTTPException(404, "Diagnosis not found")
-    return DIAGNOSIS_RESULTS_DB[userId][-1]
-
-@app.get("/diagnosis-history/{userId}", response_model=DiagnosisHistoryContract, tags=["User Data"])
-async def get_diagnosis_history(userId: str, current_user: dict = Depends(get_current_user)):
-    if userId != current_user["username"]: raise HTTPException(403, "Access denied")
-    history = []
-    if userId in DIAGNOSIS_RESULTS_DB: history.append(DIAGNOSIS_RESULTS_DB[userId])
-    return {"userId": userId, "diagnosisHistory": history}
-
-@app.get("/health", tags=["System"])
-async def health_check():
-    return {"status": "OK", "time": datetime.utcnow()}
-
-@app.on_event("startup")
-async def startup_event():
-    print("\n🚀 SpeakTrum Backend Started Successfully")
+@app.get("/my-recordings", tags=["Main"])
+async def get_my_recordings(current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
-    if conn:
-        print("✅ CONNECTED to Google Cloud SQL!")
-        conn.close()
-    else:
-        print("⚠️ WARNING: Could not connect to Database.")
-    print("📘 Swagger UI: http://127.0.0.1:8000/docs\n")
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM voice_recordings WHERE user_id = %s", (current_user["user_id"],))
+    rows = cur.fetchall()
+    conn.close()
+
+    # ✅ THE SECURE PART: Convert private paths into temporary Signed URLs
+    for row in rows:
+        if row['raw_url']:
+            row['raw_url'] = generate_secure_url(RAW_BUCKET_NAME, row['raw_url'])
+        if row['processed_url']:
+            row['processed_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['processed_url'])
+        if row['spectrogram_url']:
+            row['spectrogram_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['spectrogram_url'])
+    
+    return rows
