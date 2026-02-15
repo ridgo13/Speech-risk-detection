@@ -1,5 +1,6 @@
 # Security: Never share your secret keys
 *.env
+ai/backend_pipeline/service_account.json
 
 # Python: Ignore temporary files and virtual environments
 __pycache__/
