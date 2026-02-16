@@ -31,9 +31,45 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 60
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/login")
 
+# Bucket Names
 RAW_BUCKET_NAME = "speaktrum-raw-audio"
 PROCESSED_BUCKET_NAME = "speaktrum-processed-data"
 KEY_PATH = "backend_scripts/service_account.json" 
+
+# =========================================================
+# STARTUP CHECKS (The 3 Green Checkmarks)
+# =========================================================
+@app.on_event("startup")
+async def startup_event():
+    print("\n🔍 STARTING SYSTEM CHECKS...")
+    
+    # Check 1: Database
+    conn = get_db_connection()
+    if conn:
+        print("✅ CONNECTED to Google Cloud SQL!")
+        conn.close()
+    else:
+        print("❌ Database Connection Failed")
+
+    # Check 2: Google Storage (Both Buckets)
+    try:
+        if os.path.exists(KEY_PATH):
+            storage_client = storage.Client.from_service_account_json(KEY_PATH)
+            
+            # Check Raw Bucket
+            bucket1 = storage_client.get_bucket(RAW_BUCKET_NAME)
+            print(f"✅ CONNECTED to Raw Bucket: {RAW_BUCKET_NAME}")
+            
+            # Check Processed Bucket
+            bucket2 = storage_client.get_bucket(PROCESSED_BUCKET_NAME)
+            print(f"✅ CONNECTED to Processed Bucket: {PROCESSED_BUCKET_NAME}")
+        else:
+            print(f"❌ Key File Missing at: {KEY_PATH}")
+    except Exception as e:
+        print(f"❌ Storage Connection Failed: {e}")
+        
+    print("🚀 SYSTEM READY!\n")
+    print("📘 Swagger UI: http://127.0.0.1:8000/docs")
 
 # =========================================================
 # IMPORT AI MODULES
@@ -58,7 +94,7 @@ def get_db_connection():
         )
         return conn
     except Exception as e:
-        print(f"❌ Database Connection Failed: {e}")
+        # print(f"❌ Database Connection Failed: {e}") # Optional: keep logs clean
         return None
 
 def generate_secure_url(bucket_name, blob_name):
