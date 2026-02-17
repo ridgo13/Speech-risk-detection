@@ -24,7 +24,7 @@ app = FastAPI(title="SpeakTrum – Secure Healthcare API")
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# ✅ STRICT COMPLIANCE: Only WAV and M4A allowed (matches your report)
+# ✅ STRICT COMPLIANCE: Only WAV and M4A allowed
 ALLOWED_AUDIO_EXTENSIONS = {"wav", "m4a"}
 
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_for_development_only")
@@ -52,6 +52,7 @@ def get_db_connection():
         )
         return conn
     except Exception as e:
+        print(f"⚠️ DB CONNECTION ERROR: {e}")
         return None
 
 def generate_secure_url(bucket_name, blob_name):
@@ -96,7 +97,7 @@ async def startup_event():
         print("✅ CONNECTED to Google Cloud SQL!")
         conn.close()
     else:
-        print("❌ Database Connection Failed")
+        print("❌ Database Connection Failed (Check IP Whitelist)")
 
     try:
         if os.path.exists(KEY_PATH):
@@ -136,11 +137,18 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         conn = get_db_connection()
+        
+        # ✅ FIX 1: Prevent crash if DB is down
+        if not conn:
+             raise HTTPException(status_code=503, detail="Database Unavailable")
+        
         cur = conn.cursor()
         cur.execute("SELECT user_id, username, email FROM users WHERE user_id = %s", (user_id,))
         user = cur.fetchone()
         conn.close()
         return user
+    except HTTPException:
+        raise
     except:
         raise HTTPException(status_code=401, detail="Authentication failed")
 
@@ -182,24 +190,43 @@ def run_audio_processing_pipeline(file_path: str, user_id: str):
 @app.post("/register", tags=["Auth"])
 async def register(username: str = Form(...), email: str = Form(...), password: str = Form(...)):
     conn = get_db_connection()
-    cur = conn.cursor()
-    new_uuid = str(uuid4())
-    hashed = pwd_context.hash(password)
-    cur.execute("INSERT INTO users (user_id, username, email, hashed_password) VALUES (%s,%s,%s,%s)", (new_uuid, username, email, hashed))
-    conn.commit()
-    conn.close()
-    return {"user_id": new_uuid}
+    # ✅ FIX 2: Check connection before using
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database connection failed")
+    
+    try:
+        cur = conn.cursor()
+        new_uuid = str(uuid4())
+        hashed = pwd_context.hash(password)
+        cur.execute("INSERT INTO users (user_id, username, email, hashed_password) VALUES (%s,%s,%s,%s)", (new_uuid, username, email, hashed))
+        conn.commit()
+        return {"user_id": new_uuid}
+    except Exception as e:
+        print(f"❌ Register Error: {e}")
+        raise HTTPException(status_code=400, detail="Registration failed")
+    finally:
+        if conn:
+            conn.close()
 
 @app.post("/login", tags=["Auth"])
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT user_id, hashed_password FROM users WHERE username = %s", (form_data.username,))
-    user = cur.fetchone()
-    conn.close()
-    if not user or not pwd_context.verify(form_data.password, user["hashed_password"]):
-        raise HTTPException(401, "Invalid credentials")
-    return {"access_token": create_access_token({"sub": user["user_id"]}), "token_type": "bearer"}
+    # ✅ FIX 3: Check connection before using
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database connection failed")
+
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT user_id, hashed_password FROM users WHERE username = %s", (form_data.username,))
+        user = cur.fetchone()
+        
+        if not user or not pwd_context.verify(form_data.password, user["hashed_password"]):
+            raise HTTPException(401, "Invalid credentials")
+        
+        return {"access_token": create_access_token({"sub": user["user_id"]}), "token_type": "bearer"}
+    finally:
+        if conn:
+            conn.close()
 
 @app.post("/upload-audio", tags=["Main"])
 async def upload_audio(
@@ -209,10 +236,9 @@ async def upload_audio(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: dict = Depends(get_current_user)
 ):
-    # Fix: Extract extension correctly
     ext = audio_file.filename.split(".")[-1].lower()
 
-    # ✅ THE GATEKEEPER: Reject MP3s here
+    # ✅ THE GATEKEEPER
     if ext not in ALLOWED_AUDIO_EXTENSIONS:
         raise HTTPException(
             status_code=400, 
@@ -229,10 +255,12 @@ async def upload_audio(
     gcs_path = f"raw/{current_user['user_id']}/{file_id}.{ext}"
     upload_to_gcs(local_path, gcs_path, RAW_BUCKET_NAME)
 
-    # Database Insert with Error Handling
-    conn = None
+    conn = get_db_connection()
+    # ✅ FIX 4: Check connection before using
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database connection failed")
+
     try:
-        conn = get_db_connection()
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO voice_recordings (user_id, file_path, audio_format, created_at, raw_url) VALUES (%s,%s,%s,%s,%s)",
@@ -253,12 +281,15 @@ async def upload_audio(
 @app.get("/my-recordings", tags=["Main"])
 async def get_my_recordings(current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
+    # ✅ FIX 5: Check connection before using
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database connection failed")
+    
     cur = conn.cursor()
     cur.execute("SELECT * FROM voice_recordings WHERE user_id = %s", (current_user["user_id"],))
     rows = cur.fetchall()
     conn.close()
 
-    # ✅ THE SECURE PART: Convert private paths into temporary Signed URLs
     for row in rows:
         if row['raw_url']:
             row['raw_url'] = generate_secure_url(RAW_BUCKET_NAME, row['raw_url'])
