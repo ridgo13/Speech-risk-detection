@@ -37,50 +37,6 @@ PROCESSED_BUCKET_NAME = "speaktrum-processed-data"
 KEY_PATH = "backend_scripts/service_account.json" 
 
 # =========================================================
-# STARTUP CHECKS (The 3 Green Checkmarks)
-# =========================================================
-@app.on_event("startup")
-async def startup_event():
-    print("\n🔍 STARTING SYSTEM CHECKS...")
-    
-    # Check 1: Database
-    conn = get_db_connection()
-    if conn:
-        print("✅ CONNECTED to Google Cloud SQL!")
-        conn.close()
-    else:
-        print("❌ Database Connection Failed")
-
-    # Check 2: Google Storage (Both Buckets)
-    try:
-        if os.path.exists(KEY_PATH):
-            storage_client = storage.Client.from_service_account_json(KEY_PATH)
-            
-            # Check Raw Bucket
-            bucket1 = storage_client.get_bucket(RAW_BUCKET_NAME)
-            print(f"✅ CONNECTED to Raw Bucket: {RAW_BUCKET_NAME}")
-            
-            # Check Processed Bucket
-            bucket2 = storage_client.get_bucket(PROCESSED_BUCKET_NAME)
-            print(f"✅ CONNECTED to Processed Bucket: {PROCESSED_BUCKET_NAME}")
-        else:
-            print(f"❌ Key File Missing at: {KEY_PATH}")
-    except Exception as e:
-        print(f"❌ Storage Connection Failed: {e}")
-        
-    print("🚀 SYSTEM READY!\n")
-    print("📘 Swagger UI: http://127.0.0.1:8000/docs")
-
-# =========================================================
-# IMPORT AI MODULES
-# =========================================================
-try:
-    from backend_scripts.etl_pipeline import AudioETL
-    from backend_scripts.feature_extractor import generate_mel_spectrogram
-except ImportError as e:
-    print(f"⚠️ AI MODULE IMPORT ERROR: {e}")
-
-# =========================================================
 # DATABASE & SECURE HELPER FUNCTIONS
 # =========================================================
 def get_db_connection():
@@ -94,7 +50,6 @@ def get_db_connection():
         )
         return conn
     except Exception as e:
-        # print(f"❌ Database Connection Failed: {e}") # Optional: keep logs clean
         return None
 
 def generate_secure_url(bucket_name, blob_name):
@@ -122,10 +77,48 @@ def upload_to_gcs(local_file_path, destination_blob_name, bucket_name):
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(destination_blob_name)
         blob.upload_from_filename(local_file_path)
-        return destination_blob_name  # We save the PATH, not the URL
+        return destination_blob_name
     except Exception as e:
         print(f"❌ GCS UPLOAD FAILED: {e}")
         return None
+
+# =========================================================
+# STARTUP CHECKS (The 3 Green Checkmarks)
+# =========================================================
+@app.on_event("startup")
+async def startup_event():
+    print("\n🔍 STARTING SYSTEM CHECKS...")
+    
+    conn = get_db_connection()
+    if conn:
+        print("✅ CONNECTED to Google Cloud SQL!")
+        conn.close()
+    else:
+        print("❌ Database Connection Failed")
+
+    try:
+        if os.path.exists(KEY_PATH):
+            storage_client = storage.Client.from_service_account_json(KEY_PATH)
+            storage_client.get_bucket(RAW_BUCKET_NAME)
+            print(f"✅ CONNECTED to Raw Bucket: {RAW_BUCKET_NAME}")
+            storage_client.get_bucket(PROCESSED_BUCKET_NAME)
+            print(f"✅ CONNECTED to Processed Bucket: {PROCESSED_BUCKET_NAME}")
+        else:
+            print(f"❌ Key File Missing at: {KEY_PATH}")
+    except Exception as e:
+        print(f"❌ Storage Connection Failed: {e}")
+        
+    print("🚀 SYSTEM READY!\n")
+    print("📘 Swagger UI: http://127.0.0.1:8000/docs")
+
+# =========================================================
+# IMPORT AI MODULES
+# =========================================================
+try:
+    from backend_scripts.etl_pipeline import AudioETL
+    from backend_scripts.feature_extractor import generate_mel_spectrogram
+except ImportError as e:
+    print(f"⚠️ AI MODULE IMPORT ERROR: {e}")
 
 # =========================================================
 # SECURITY & AUTHENTICATION
@@ -145,8 +138,10 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         cur.execute("SELECT user_id, username, email FROM users WHERE user_id = %s", (user_id,))
         user = cur.fetchone()
         conn.close()
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
         return user
-    except:
+    except Exception:
         raise HTTPException(status_code=401, detail="Authentication failed")
 
 # =========================================================
@@ -164,7 +159,6 @@ def run_audio_processing_pipeline(file_path: str, user_id: str):
             if etl_engine.run_pipeline(file_path, clean_path):
                 generate_mel_spectrogram(clean_path, directory, filename_stem)
                 
-                # Upload and Save Path
                 proc_path = upload_to_gcs(clean_path, f"processed/{user_id}/cleaned_{original_filename}", PROCESSED_BUCKET_NAME)
                 spec_path = upload_to_gcs(os.path.join(directory, f"{filename_stem}.png"), f"spectrograms/{user_id}/{filename_stem}.png", PROCESSED_BUCKET_NAME)
                 
@@ -177,6 +171,7 @@ def run_audio_processing_pipeline(file_path: str, user_id: str):
                     )
                     conn.commit()
                     conn.close()
+                    print(f"✅ AI SUCCESS: Data updated for {user_id}")
     except Exception as e:
         print(f"❌ ETL Error: {e}")
 
@@ -187,13 +182,20 @@ def run_audio_processing_pipeline(file_path: str, user_id: str):
 @app.post("/register", tags=["Auth"])
 async def register(username: str = Form(...), email: str = Form(...), password: str = Form(...)):
     conn = get_db_connection()
+    if not conn: raise HTTPException(500, "DB connection failed")
     cur = conn.cursor()
     new_uuid = str(uuid4())
     hashed = pwd_context.hash(password)
-    cur.execute("INSERT INTO users (user_id, username, email, hashed_password) VALUES (%s,%s,%s,%s)", (new_uuid, username, email, hashed))
-    conn.commit()
-    conn.close()
-    return {"user_id": new_uuid}
+    try:
+        cur.execute("INSERT INTO users (user_id, username, email, hashed_password) VALUES (%s,%s,%s,%s)", 
+                    (new_uuid, username, email, hashed))
+        conn.commit()
+        return {"user_id": new_uuid}
+    except Exception as e:
+        conn.rollback()
+        raise HTTPException(400, f"Registration failed: {str(e)}")
+    finally:
+        conn.close()
 
 @app.post("/login", tags=["Auth"])
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -214,7 +216,13 @@ async def upload_audio(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: dict = Depends(get_current_user)
 ):
-    ext = audio_file.filename.split(".")[-1].lower()
+    # FIX: Extract extension correctly from filename list
+    try:
+        parts = audio_file.filename.split(".")
+        ext = parts[-1].lower() if len(parts) > 1 else "wav"
+    except Exception:
+        ext = "wav"
+
     file_id = str(uuid4())
     local_path = os.path.join(UPLOAD_DIR, f"{file_id}.{ext}")
 
@@ -225,33 +233,41 @@ async def upload_audio(
     gcs_path = f"raw/{current_user['user_id']}/{file_id}.{ext}"
     upload_to_gcs(local_path, gcs_path, RAW_BUCKET_NAME)
 
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute(
-        "INSERT INTO voice_recordings (user_id, file_path, audio_format, created_at, raw_url) VALUES (%s,%s,%s,%s,%s)",
-        (current_user["user_id"], local_path, audioFormat, timestamp, gcs_path)
-    )
-    conn.commit()
-    conn.close()
+    # DB Insert with Error Handling
+    conn = None
+    try:
+        conn = get_db_connection()
+        if not conn: raise Exception("DB connection failed")
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO voice_recordings (user_id, file_path, audio_format, created_at, raw_url) VALUES (%s,%s,%s,%s,%s)",
+            (current_user["user_id"], local_path, audioFormat, timestamp, gcs_path)
+        )
+        conn.commit()
+        print(f"✅ DB SUCCESS: Recorded for {current_user['username']}")
+    except Exception as e:
+        print(f"❌ DB ERROR: {e}")
+        raise HTTPException(500, f"Database error: {str(e)}")
+    finally:
+        if conn: conn.close()
 
     background_tasks.add_task(run_audio_processing_pipeline, local_path, current_user["user_id"])
-    return {"status": "Processing"}
+    return {"status": "Processing", "file_id": file_id}
 
 @app.get("/my-recordings", tags=["Main"])
 async def get_my_recordings(current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM voice_recordings WHERE user_id = %s", (current_user["user_id"],))
+    cur.execute("SELECT * FROM voice_recordings WHERE user_id = %s ORDER BY created_at DESC", (current_user["user_id"],))
     rows = cur.fetchall()
     conn.close()
 
-    # ✅ THE SECURE PART: Convert private paths into temporary Signed URLs
     for row in rows:
-        if row['raw_url']:
+        if row.get('raw_url'):
             row['raw_url'] = generate_secure_url(RAW_BUCKET_NAME, row['raw_url'])
-        if row['processed_url']:
+        if row.get('processed_url'):
             row['processed_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['processed_url'])
-        if row['spectrogram_url']:
+        if row.get('spectrogram_url'):
             row['spectrogram_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['spectrogram_url'])
     
     return rows
