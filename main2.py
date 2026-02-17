@@ -23,7 +23,9 @@ app = FastAPI(title="SpeakTrum – Secure Healthcare API")
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
-ALLOWED_AUDIO_EXTENSIONS = {"wav", "mp3", "m4a", "flac"}
+
+# ✅ STRICT COMPLIANCE: Only WAV and M4A allowed (matches your report)
+ALLOWED_AUDIO_EXTENSIONS = {"wav", "m4a"}
 
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_for_development_only")
 ALGORITHM = "HS256"
@@ -83,7 +85,7 @@ def upload_to_gcs(local_file_path, destination_blob_name, bucket_name):
         return None
 
 # =========================================================
-# STARTUP CHECKS (The 3 Green Checkmarks)
+# STARTUP CHECKS
 # =========================================================
 @app.on_event("startup")
 async def startup_event():
@@ -138,10 +140,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         cur.execute("SELECT user_id, username, email FROM users WHERE user_id = %s", (user_id,))
         user = cur.fetchone()
         conn.close()
-        if not user:
-            raise HTTPException(status_code=401, detail="User not found")
         return user
-    except Exception:
+    except:
         raise HTTPException(status_code=401, detail="Authentication failed")
 
 # =========================================================
@@ -182,20 +182,13 @@ def run_audio_processing_pipeline(file_path: str, user_id: str):
 @app.post("/register", tags=["Auth"])
 async def register(username: str = Form(...), email: str = Form(...), password: str = Form(...)):
     conn = get_db_connection()
-    if not conn: raise HTTPException(500, "DB connection failed")
     cur = conn.cursor()
     new_uuid = str(uuid4())
     hashed = pwd_context.hash(password)
-    try:
-        cur.execute("INSERT INTO users (user_id, username, email, hashed_password) VALUES (%s,%s,%s,%s)", 
-                    (new_uuid, username, email, hashed))
-        conn.commit()
-        return {"user_id": new_uuid}
-    except Exception as e:
-        conn.rollback()
-        raise HTTPException(400, f"Registration failed: {str(e)}")
-    finally:
-        conn.close()
+    cur.execute("INSERT INTO users (user_id, username, email, hashed_password) VALUES (%s,%s,%s,%s)", (new_uuid, username, email, hashed))
+    conn.commit()
+    conn.close()
+    return {"user_id": new_uuid}
 
 @app.post("/login", tags=["Auth"])
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
@@ -216,12 +209,15 @@ async def upload_audio(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: dict = Depends(get_current_user)
 ):
-    # FIX: Extract extension correctly from filename list
-    try:
-        parts = audio_file.filename.split(".")
-        ext = parts[-1].lower() if len(parts) > 1 else "wav"
-    except Exception:
-        ext = "wav"
+    # Fix: Extract extension correctly
+    ext = audio_file.filename.split(".")[-1].lower()
+
+    # ✅ THE GATEKEEPER: Reject MP3s here
+    if ext not in ALLOWED_AUDIO_EXTENSIONS:
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Invalid format '.{ext}'. Only WAV and M4A are allowed for medical accuracy."
+        )
 
     file_id = str(uuid4())
     local_path = os.path.join(UPLOAD_DIR, f"{file_id}.{ext}")
@@ -233,11 +229,10 @@ async def upload_audio(
     gcs_path = f"raw/{current_user['user_id']}/{file_id}.{ext}"
     upload_to_gcs(local_path, gcs_path, RAW_BUCKET_NAME)
 
-    # DB Insert with Error Handling
+    # Database Insert with Error Handling
     conn = None
     try:
         conn = get_db_connection()
-        if not conn: raise Exception("DB connection failed")
         cur = conn.cursor()
         cur.execute(
             "INSERT INTO voice_recordings (user_id, file_path, audio_format, created_at, raw_url) VALUES (%s,%s,%s,%s,%s)",
@@ -247,9 +242,10 @@ async def upload_audio(
         print(f"✅ DB SUCCESS: Recorded for {current_user['username']}")
     except Exception as e:
         print(f"❌ DB ERROR: {e}")
-        raise HTTPException(500, f"Database error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Database insertion failed")
     finally:
-        if conn: conn.close()
+        if conn:
+            conn.close()
 
     background_tasks.add_task(run_audio_processing_pipeline, local_path, current_user["user_id"])
     return {"status": "Processing", "file_id": file_id}
@@ -258,16 +254,17 @@ async def upload_audio(
 async def get_my_recordings(current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM voice_recordings WHERE user_id = %s ORDER BY created_at DESC", (current_user["user_id"],))
+    cur.execute("SELECT * FROM voice_recordings WHERE user_id = %s", (current_user["user_id"],))
     rows = cur.fetchall()
     conn.close()
 
+    # ✅ THE SECURE PART: Convert private paths into temporary Signed URLs
     for row in rows:
-        if row.get('raw_url'):
+        if row['raw_url']:
             row['raw_url'] = generate_secure_url(RAW_BUCKET_NAME, row['raw_url'])
-        if row.get('processed_url'):
+        if row['processed_url']:
             row['processed_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['processed_url'])
-        if row.get('spectrogram_url'):
+        if row['spectrogram_url']:
             row['spectrogram_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['spectrogram_url'])
     
     return rows
