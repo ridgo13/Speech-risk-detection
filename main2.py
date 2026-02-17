@@ -9,6 +9,8 @@ from dotenv import load_dotenv
 import os
 import jwt
 import aiofiles
+import librosa
+import numpy as np
 from passlib.context import CryptContext
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -24,8 +26,10 @@ app = FastAPI(title="SpeakTrum – Secure Healthcare API")
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# ✅ STRICT COMPLIANCE: Only WAV and M4A allowed
+# ✅ REPORT COMPLIANCE: Formats & Quality Thresholds
 ALLOWED_AUDIO_EXTENSIONS = {"wav", "m4a"}
+MIN_SNR_DB = 10 
+TARGET_SAMPLE_RATE = 16000
 
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback_secret_for_development_only")
 ALGORITHM = "HS256"
@@ -61,13 +65,11 @@ def generate_secure_url(bucket_name, blob_name):
         storage_client = storage.Client.from_service_account_json(KEY_PATH)
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(blob_name)
-
-        url = blob.generate_signed_url(
+        return blob.generate_signed_url(
             version="v4",
             expiration=timedelta(minutes=15),
             method="GET",
         )
-        return url
     except Exception as e:
         print(f"❌ Signed URL Error: {e}")
         return None
@@ -91,7 +93,6 @@ def upload_to_gcs(local_file_path, destination_blob_name, bucket_name):
 @app.on_event("startup")
 async def startup_event():
     print("\n🔍 STARTING SYSTEM CHECKS...")
-    
     conn = get_db_connection()
     if conn:
         print("✅ CONNECTED to Google Cloud SQL!")
@@ -110,9 +111,7 @@ async def startup_event():
             print(f"❌ Key File Missing at: {KEY_PATH}")
     except Exception as e:
         print(f"❌ Storage Connection Failed: {e}")
-        
     print("🚀 SYSTEM READY!\n")
-    print("📘 Swagger UI: http://127.0.0.1:8000/docs")
 
 # =========================================================
 # IMPORT AI MODULES
@@ -137,11 +136,8 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id: str = payload.get("sub")
         conn = get_db_connection()
-        
-        # ✅ FIX 1: Prevent crash if DB is down
         if not conn:
              raise HTTPException(status_code=503, detail="Database Unavailable")
-        
         cur = conn.cursor()
         cur.execute("SELECT user_id, username, email FROM users WHERE user_id = %s", (user_id,))
         user = cur.fetchone()
@@ -166,7 +162,6 @@ def run_audio_processing_pipeline(file_path: str, user_id: str):
             etl_engine = AudioETL()
             if etl_engine.run_pipeline(file_path, clean_path):
                 generate_mel_spectrogram(clean_path, directory, filename_stem)
-                
                 proc_path = upload_to_gcs(clean_path, f"processed/{user_id}/cleaned_{original_filename}", PROCESSED_BUCKET_NAME)
                 spec_path = upload_to_gcs(os.path.join(directory, f"{filename_stem}.png"), f"spectrograms/{user_id}/{filename_stem}.png", PROCESSED_BUCKET_NAME)
                 
@@ -190,10 +185,8 @@ def run_audio_processing_pipeline(file_path: str, user_id: str):
 @app.post("/register", tags=["Auth"])
 async def register(username: str = Form(...), email: str = Form(...), password: str = Form(...)):
     conn = get_db_connection()
-    # ✅ FIX 2: Check connection before using
     if not conn:
         raise HTTPException(status_code=503, detail="Database connection failed")
-    
     try:
         cur = conn.cursor()
         new_uuid = str(uuid4())
@@ -201,32 +194,23 @@ async def register(username: str = Form(...), email: str = Form(...), password: 
         cur.execute("INSERT INTO users (user_id, username, email, hashed_password) VALUES (%s,%s,%s,%s)", (new_uuid, username, email, hashed))
         conn.commit()
         return {"user_id": new_uuid}
-    except Exception as e:
-        print(f"❌ Register Error: {e}")
-        raise HTTPException(status_code=400, detail="Registration failed")
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
 @app.post("/login", tags=["Auth"])
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     conn = get_db_connection()
-    # ✅ FIX 3: Check connection before using
     if not conn:
         raise HTTPException(status_code=503, detail="Database connection failed")
-
     try:
         cur = conn.cursor()
         cur.execute("SELECT user_id, hashed_password FROM users WHERE username = %s", (form_data.username,))
         user = cur.fetchone()
-        
         if not user or not pwd_context.verify(form_data.password, user["hashed_password"]):
             raise HTTPException(401, "Invalid credentials")
-        
         return {"access_token": create_access_token({"sub": user["user_id"]}), "token_type": "bearer"}
     finally:
-        if conn:
-            conn.close()
+        if conn: conn.close()
 
 @app.post("/upload-audio", tags=["Main"])
 async def upload_audio(
@@ -236,30 +220,43 @@ async def upload_audio(
     background_tasks: BackgroundTasks = BackgroundTasks(),
     current_user: dict = Depends(get_current_user)
 ):
+    # 1. Extension Validation (Initial Gate)
     ext = audio_file.filename.split(".")[-1].lower()
-
-    # ✅ THE GATEKEEPER
     if ext not in ALLOWED_AUDIO_EXTENSIONS:
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Invalid format '.{ext}'. Only WAV and M4A are allowed for medical accuracy."
-        )
+        raise HTTPException(status_code=400, detail=f"Invalid format '.{ext}'. Use WAV/M4A.")
 
     file_id = str(uuid4())
     local_path = os.path.join(UPLOAD_DIR, f"{file_id}.{ext}")
 
+    # 2. Temporary Local Save for Analysis
     async with aiofiles.open(local_path, "wb") as f:
         while chunk := await audio_file.read(1024*1024):
             await f.write(chunk)
 
+    # 3. ✅ FAIL-FAST SNR CHECK (Immediate Quality Gate)
+    try:
+        y, sr = librosa.load(local_path, sr=TARGET_SAMPLE_RATE)
+        S = np.abs(librosa.stft(y))
+        power = np.mean(S**2, axis=0)
+        signal_p = np.mean(np.sort(power)[-int(len(power)*0.1):])
+        noise_p = np.mean(np.sort(power)[:int(len(power)*0.1)]) + 1e-10
+        
+        # ✅ FIX: Convert numpy float to Python float for JSON serialization
+        snr = float(10 * np.log10(signal_p / noise_p))
+
+        if snr < MIN_SNR_DB:
+            os.remove(local_path) # Delete bad quality file immediately
+            raise HTTPException(status_code=400, detail=f"SNR too low ({round(snr, 2)}dB). Please record in a quieter area.")
+    except Exception as e:
+        if isinstance(e, HTTPException): raise e
+        raise HTTPException(status_code=500, detail="Audio Quality Analysis Failed")
+
+    # 4. GCS Upload & DB Persistence
     gcs_path = f"raw/{current_user['user_id']}/{file_id}.{ext}"
     upload_to_gcs(local_path, gcs_path, RAW_BUCKET_NAME)
 
     conn = get_db_connection()
-    # ✅ FIX 4: Check connection before using
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database connection failed")
-
+    if not conn: raise HTTPException(status_code=503, detail="Database connection failed")
     try:
         cur = conn.cursor()
         cur.execute(
@@ -267,35 +264,25 @@ async def upload_audio(
             (current_user["user_id"], local_path, audioFormat, timestamp, gcs_path)
         )
         conn.commit()
-        print(f"✅ DB SUCCESS: Recorded for {current_user['username']}")
-    except Exception as e:
-        print(f"❌ DB ERROR: {e}")
-        raise HTTPException(status_code=500, detail="Database insertion failed")
     finally:
-        if conn:
-            conn.close()
+        conn.close()
 
     background_tasks.add_task(run_audio_processing_pipeline, local_path, current_user["user_id"])
-    return {"status": "Processing", "file_id": file_id}
+    
+    # ✅ FIX: Ensure snr is returned as a serializable float
+    return {"status": "Accepted", "snr": float(round(snr, 2)), "file_id": file_id}
 
 @app.get("/my-recordings", tags=["Main"])
 async def get_my_recordings(current_user: dict = Depends(get_current_user)):
     conn = get_db_connection()
-    # ✅ FIX 5: Check connection before using
-    if not conn:
-        raise HTTPException(status_code=503, detail="Database connection failed")
-    
+    if not conn: raise HTTPException(status_code=503, detail="Database connection failed")
     cur = conn.cursor()
     cur.execute("SELECT * FROM voice_recordings WHERE user_id = %s", (current_user["user_id"],))
     rows = cur.fetchall()
     conn.close()
 
     for row in rows:
-        if row['raw_url']:
-            row['raw_url'] = generate_secure_url(RAW_BUCKET_NAME, row['raw_url'])
-        if row['processed_url']:
-            row['processed_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['processed_url'])
-        if row['spectrogram_url']:
-            row['spectrogram_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['spectrogram_url'])
-    
+        if row['raw_url']: row['raw_url'] = generate_secure_url(RAW_BUCKET_NAME, row['raw_url'])
+        if row['processed_url']: row['processed_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['processed_url'])
+        if row['spectrogram_url']: row['spectrogram_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['spectrogram_url'])
     return rows
