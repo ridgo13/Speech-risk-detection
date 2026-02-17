@@ -1,12 +1,19 @@
 // ignore_for_file: unused_import
 
 import 'package:flutter/material.dart';
+import 'package:speaktrum_risk_detection/screens/DashboardScreen.dart';
+import 'services/notification_service.dart';
+import 'screens/settings_screen.dart';
 
 // 1. Import your new "One File" for auth
 import 'screens/auth_screens.dart';
 import 'screens/onboarding_screen.dart';
 
-void main() {
+final NotificationService notificationService = NotificationService();
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await notificationService.init();
   runApp(const SpeakTrumApp());
 }
 
@@ -22,16 +29,7 @@ class SpeakTrumApp extends StatelessWidget {
       theme: ThemeData(fontFamily: 'Roboto', useMaterial3: true),
 
       // START HERE
-      initialRoute: '/onboarding',
-
-      routes: {
-        // All these are inside 'auth_screens.dart' now:
-        '/': (context) => const StartScreen(),
-        '/signin': (context) => const SignInScreen(),
-        '/signup': (context) => const CreateAccountScreen(),
-        '/forgot-password': (context) => const ForgotPasswordScreen(),
-        '/onboarding': (context) => const OnboardingScreen(),
-      },
+      home: const SettingsScreen(),
     );
   }
 }
