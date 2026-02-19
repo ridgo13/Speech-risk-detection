@@ -66,6 +66,13 @@ pip-delete-this-directory.txt
 .DS_Store
 Thumbs.db
 
+#LOCAL DATA: Don't upload test audio files or huge datasets
+raw_data/
+processed_data/
+uploads/
+spectrograms/
+cnn_features/
+
 
 # Tools and Binaries
 cloud-sql-proxy.exe
