@@ -1,17 +1,72 @@
-# Security: Never share your secret keys
+# ===============================================
+# SECURITY: DO NOT DELETE (Critical Secrets)
+# ===============================================
+.env
 *.env
+.envrc
+# Blocking both paths to be 100% safe
 ai/backend_pipeline/service_account.json
+service_account.json
 
-# Python: Ignore temporary files and virtual environments
+# ===============================================
+# ENVIRONMENTS: Local Toolboxes
+# ===============================================
+venv/
+env/
+.venv/
+ENV/
+venv.bak/
+env.bak/
+bin/
+include/
+lib/
+share/
+pyvenv.cfg
+
+# ===============================================
+# DATA & UPLOADS: Large/Local Files
+# ===============================================
+uploads/
+raw_data/
+processed_data/
+spectrograms/
+processed_audio/
+*.wav
+*.mp3
+*.flac
+*.m4a
+*.png
+
+# ===============================================
+# PYTHON JUNK: Byte-compiled files
+# ===============================================
 __pycache__/
 *.py[cod]
 *$py.class
-venv/
-env/
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
 
-# Project Specific: Ignore the actual audio files uploaded
-uploads/
-
-# OS Specific
+# ===============================================
+# IDE & SYSTEM: VS Code / OS Files
+# ===============================================
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
+
+
+# Tools and Binaries
+cloud-sql-proxy.exe
+cloud-sql-proxy
