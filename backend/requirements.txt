@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+python-dotenv
+passlib[bcrypt]
+psycopg2-binary
+google-cloud-storage
+librosa
+numpy
+aiofiles
+slowapi
+PyJWT
