@@ -1,0 +1,9 @@
+SECRET_KEY="super_secret_key_for_testing"
+ALGORITHM="HS256"
+UPLOAD_DIR="uploads"
+
+# Database Credentials
+DB_HOST="34.171.37.203"      # Your Public IP from Google Cloud
+DB_NAME="speaktrum_db"     # The database name
+DB_USER="postgres"         # Default user
+DB_PASS="qz*,2zZQ=4<6v4jY"    # The password you set earlier

@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 import os
 import uuid
 import torch
@@ -171,3 +172,13 @@ if __name__ == "__main__":
         df.to_sql('parkinsons_results', engine, if_exists='replace', index=False)
         print("✅ Data stored in Cloud SQL successfully.")
     except Exception as e: print(f"⚠️ Cloud Error: {e}. Saved to CSV instead."); df.to_csv("backup_results.csv")
+=======
+
+
+import torch
+
+
+data = torch.load("cnn_features/sample_0.pt")
+print(data["features"].shape)
+print(data["label"])
+>>>>>>> parishad
