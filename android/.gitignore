@@ -12,3 +12,14 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+# Ignore the Python environment folder
+env/
+venv/
+.env
+
+# Ignore JSON credential files
+*.json
+
+# Ignore local database backups and models
+*.csv
+*.pth

@@ -1,0 +1,29 @@
+# CORE AI & SIGNAL PROCESSING
+numpy
+librosa
+scipy
+soundfile
+matplotlib
+torch
+torchaudio
+torchvision
+Pillow
+
+# CLINICAL BIOMARKERS
+praat-parselmouth
+
+# DATA & DATABASE
+pandas
+sqlalchemy
+psycopg2-binary
+
+# CLOUD & API INTEGRATION
+fastapi
+uvicorn
+python-multipart
+python-dotenv
+pyjwt
+passlib[bcrypt]
+google-cloud-storage
+google-cloud-sql-connector
+aiofiles
