@@ -29,6 +29,15 @@ def get_nearby_healthcare():
         response = requests.get(overpass_url, params={'data': query})
         data = response.json()
         
+        # FIX 1: Check if the external API actually answered
+        if response.status_code != 200:
+            return jsonify({"error": f"Overpass API returned error {response.status_code}"}), 502
+
+        # FIX 2: Check if the body is actually JSON
+        try:
+            data = response.json()
+        except ValueError:
+            return jsonify({"error": "Overpass API sent invalid data. Try again in 5 seconds."}), 502
         real_time_results = []
         for element in data.get('elements', []):
             tags = element.get('tags', {})
@@ -36,7 +45,7 @@ def get_nearby_healthcare():
             h_lat = element.get('lat') or element.get('center', {}).get('lat')
             h_lng = element.get('lon') or element.get('center', {}).get('lon')
             
-            real_time_results.append({
+        real_time_results.append({
                 "name": tags.get("name", "Healthcare Facility"),
                 "type": tags.get("amenity", "Health").capitalize(),
                 "address": tags.get("addr:street", "Nearby Area"),
@@ -47,7 +56,7 @@ def get_nearby_healthcare():
                 "status": "Open", # OSM status can be complex, using a default
                 "rating": "4.5", # OSM doesn't have ratings like Google
                 "reviews": "100"
-            })
+        })
             
         return jsonify(real_time_results)
     except Exception as e:

@@ -23,19 +23,6 @@ lib/
 share/
 pyvenv.cfg
 
-# ===============================================
-# DATA & UPLOADS: Large/Local Files
-# ===============================================
-uploads/
-raw_data/
-processed_data/
-spectrograms/
-processed_audio/
-*.wav
-*.mp3
-*.flac
-*.m4a
-*.png
 
 # ===============================================
 # PYTHON JUNK: Byte-compiled files
@@ -66,11 +53,6 @@ pip-delete-this-directory.txt
 .DS_Store
 Thumbs.db
 
-# AI Data Folders (Ignore local generated files)
-ai/raw_data/
-ai/processed_data/
-ai/spectrograms/
-ai/cnn_features/
 
 # Tools and Binaries
 cloud-sql-proxy.exe
@@ -80,7 +62,3 @@ cloud-sql-proxy
 Dockerfile
 docker-compose.yml
 .dockerignore
-
-# Exclude these as well
-*.pth
-*.csv
