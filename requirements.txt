@@ -1,12 +1,37 @@
+# CLOUD & API INTEGRATION
 fastapi
 uvicorn
+python-multipart
 python-dotenv
 passlib[bcrypt]
 psycopg2-binary
 google-cloud-storage
+cloud-sql-python-connector[pg8000] # For mac users type pip install "cloud-sql-python-connector[pg8000]" if you get error when installing the requirements.txt file 
+pg8000  # Added: Required for the Google Cloud SQL Connector
+email-validator # Added: Required if you use EmailStr in Pydantic models
 librosa
 numpy
 aiofiles
 slowapi
 PyJWT
 tzdata
+
+# CORE AI & SIGNAL PROCESSING
+numpy
+librosa
+scipy
+soundfile
+audioread # Added: Essential backend for librosa to read files
+matplotlib
+torch
+torchaudio
+torchvision
+Pillow
+
+# CLINICAL BIOMARKERS
+praat-parselmouth
+
+# DATA & DATABASE
+pandas
+sqlalchemy
+psycopg2-binary

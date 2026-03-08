@@ -75,3 +75,12 @@ ai/cnn_features/
 # Tools and Binaries
 cloud-sql-proxy.exe
 cloud-sql-proxy
+
+# Exclude Docker configuration
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Exclude these as well
+*.pth
+*.csv

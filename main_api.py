@@ -1,3 +1,7 @@
+import torch
+from PIL import Image
+from torchvision import transforms
+from ai.train_and_extract import DeepRiskClassifier, extract_clinical_metrics
 from fastapi import FastAPI, Request, UploadFile, File, Form, HTTPException, Depends, BackgroundTasks, status
 from fastapi.responses import FileResponse
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -29,13 +33,21 @@ import logging
 # =========================================================
 load_dotenv()
 
-logging.basicConfig(level=logging.INFO)
+# Structured Logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
 MY_TIMEZONE = ZoneInfo("Asia/Kuala_Lumpur") # UTC+8
 
+# --- ADDED: AUTOMATIC HARDWARE DETECTION ---
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+logger.info(f"🖥️ Hardware Acceleration: {DEVICE}")
+# --------------------------------------------
+
 app = FastAPI(
     title="SpeakTrum – Secure Healthcare API",
+    description="AI-powered pipeline for Parkinson's Disease risk detection via voice biomarkers.",
+    version="1.0.0",
     docs_url="/docs",           # Now you can visit http://127.0.0.1:8000/docs
     redoc_url="/redoc",         # Optional: Alternative documentation view
     openapi_url="/openapi.json" # Required for the docs to work
@@ -98,6 +110,18 @@ RAW_BUCKET_NAME = "speaktrum-raw-audio"
 PROCESSED_BUCKET_NAME = "speaktrum-processed-data"
 KEY_PATH = "ai/backend_pipeline/service_account.json" 
 
+# Global AI Model Variable (Step 1)
+AI_MODEL = None
+
+# =========================================================
+# IMPORT AI MODULES (User's paths)
+# =========================================================
+try:
+    from ai.backend_pipeline.etl_pipeline import AudioETL
+    from ai.backend_pipeline.feature_extractor import generate_mel_spectrogram
+except ImportError as e:
+    logger.error(f"⚠️ AI MODULE IMPORT ERROR: {e}. Check folder naming and __init__.py files.")
+
 # =========================================================
 # DATABASE & SECURE HELPER FUNCTIONS
 # =========================================================
@@ -128,19 +152,19 @@ def generate_secure_url(bucket_name, blob_name):
             method="GET",
         )
     except Exception as e:
-        logger.error("Signed URL Error")
+        logger.error("Signed URL Error: {e}")
         return None
 
 def upload_to_gcs(local_file_path, destination_blob_name, bucket_name):
     try:
         if not os.path.exists(KEY_PATH):
-            print(f"⚠️ SKIPPING GCS: Key not found at {KEY_PATH}")
+            logger.warning(f"⚠️ SKIPPING GCS: Key not found at {KEY_PATH}")
             return None
         storage_client = storage.Client.from_service_account_json(KEY_PATH)
         bucket = storage_client.bucket(bucket_name)
         blob = bucket.blob(destination_blob_name)
         blob.upload_from_filename(local_file_path)
-        print(f"☁️ UPLOADED to {bucket_name}: {destination_blob_name}")
+        logger.info(f"☁️ UPLOADED to {bucket_name}: {destination_blob_name}")
         return destination_blob_name
     except Exception as e:
         logger.error("GCS UPLOAD FAILED")
@@ -156,9 +180,17 @@ class UserRegistrationContract(BaseModel):
 
 class DiagnosisResultContract(BaseModel):
     user_id: str
+    username: str = Field(..., alias="Patient_Name") # Maps DB "Patient_Name" to "username"
     probability: float
     diagnosis: str
-    created_at: datetime 
+    audio_source: str # Added this
+    jitter_level: float = Field(default=0.0)
+    shimmer_level: float = Field(default=0.0)
+    hnr_level: float = Field(default=0.0)
+    created_at: datetime
+
+    class Config:
+        populate_by_name = True # Allows us to use the alias in the response
 
 class DiagnosisHistoryContract(BaseModel):
     user_id: str
@@ -176,39 +208,48 @@ class RealTimeFeedbackContract(BaseModel):
     timestamp: datetime
 
 # =========================================================
-# STARTUP CHECKS
+# STARTUP CHECKS & MODEL LOADING
 # =========================================================
 @app.on_event("startup")
 async def startup_event():
-    print("\n🔍 STARTING SYSTEM CHECKS...")
+    global AI_MODEL
+    logger.info("\n🔍 STARTING SYSTEM CHECKS...")
     conn = get_db_connection()
     if conn:
-        print("✅ CONNECTED to Google Cloud SQL!")
+        logger.info("✅ CONNECTED to Google Cloud SQL!")
         conn.close()
     else:
-        print("❌ Database Connection Failed (Check IP Whitelist)")
+        logger.error("❌ Database Connection Failed (Check IP Whitelist)")
 
     try:
         if os.path.exists(KEY_PATH):
             storage_client = storage.Client.from_service_account_json(KEY_PATH)
             storage_client.get_bucket(RAW_BUCKET_NAME)
-            print(f"✅ CONNECTED to Raw Bucket: {RAW_BUCKET_NAME}")
+            logger.info(f"✅ CONNECTED to Raw Bucket: {RAW_BUCKET_NAME}")
             storage_client.get_bucket(PROCESSED_BUCKET_NAME)
-            print(f"✅ CONNECTED to Processed Bucket: {PROCESSED_BUCKET_NAME}")
+            logger.info(f"✅ CONNECTED to Processed Bucket: {PROCESSED_BUCKET_NAME}")
         else:
-            print(f"❌ Key File Missing at: {KEY_PATH}")
+            logger.error(f"❌ Key File Missing at: {KEY_PATH}")
     except Exception as e:
-        logger.error("Storage connection failed")
-    print("🚀 SYSTEM READY! Documentation at: http://127.0.0.1:8000/docs\n")
+        logger.error("Storage connection failed: {e}")
 
-# =========================================================
-# IMPORT AI MODULES (User's paths)
-# =========================================================
-try:
-    from ai.backend_pipeline.etl_pipeline import AudioETL
-    from ai.backend_pipeline.feature_extractor import generate_mel_spectrogram
-except ImportError as e:
-    print(f"⚠️ AI MODULE IMPORT ERROR: {e}. Check folder naming and __init__.py files.")
+    # Step 1: Load Model Once into Memory
+    logger.info("🧠 Loading AI Model into memory...")
+    model_path = "parkinsons_high_acc_model.pth"
+    if os.path.exists(model_path):
+        AI_MODEL = DeepRiskClassifier().to(DEVICE)
+        AI_MODEL.load_state_dict(torch.load(model_path, map_location=DEVICE))
+        AI_MODEL.eval()
+
+        # --- THE WARM-UP LOGIC ---
+        dummy_input = torch.randn(1, 1, 128, 128).to(DEVICE)
+        with torch.no_grad():
+            _ = AI_MODEL(dummy_input)
+        logger.info("✅ AI Model ready.")
+    else:
+        logger.error(f"❌ PIPELINE ABORTED: AI Model file '{model_path}' not found!")
+    
+    logger.info("🚀 SYSTEM READY! Documentation at: http://127.0.0.1:8000/docs\n")
 
 # =========================================================
 # SECURITY & AUTHENTICATION
@@ -251,44 +292,156 @@ def get_current_user(token: str = Depends(oauth2_scheme)):
 # =========================================================
 # BACKGROUND PIPELINE (Merged logic)
 # =========================================================
-def run_audio_processing_pipeline(file_path: str, user_id: str):
+def run_audio_processing_pipeline(file_path: str, user_id: str, username: str):
     """Handles ETL, Feature Extraction, and Database Updating in the background."""
-    print(f"🔄 ETL: Starting background pipeline for user {user_id}...")
+    logger.info(f"🔄 PIPELINE: Starting for user {username} ({user_id})...")
+    
     directory = os.path.dirname(file_path)
     original_filename = os.path.basename(file_path)
     filename_stem = os.path.splitext(original_filename)[0]
     clean_path = os.path.join(directory, f"cleaned_{original_filename}")
+    spec_local_path = os.path.join(directory, f"{filename_stem}.png")
+
+    # Open Connection Once
+    conn = get_db_connection()
+    if not conn:
+        logger.error("❌ PIPELINE ABORTED: Could not connect to Database.")
+        return
+    cur = conn.cursor() if conn else None
 
     try:
-        if 'AudioETL' in globals():
-            etl_engine = AudioETL()
-            if etl_engine.run_pipeline(file_path, clean_path):
-                generate_mel_spectrogram(clean_path, directory, filename_stem)
-                
-                # Cloud Uploads
-                print("🚀 Starting Processed Bucket Uploads...")
-                proc_path = upload_to_gcs(clean_path, f"processed/{user_id}/cleaned_{original_filename}", PROCESSED_BUCKET_NAME)
-                spec_path = upload_to_gcs(os.path.join(directory, f"{filename_stem}.png"), f"spectrograms/{user_id}/{filename_stem}.png", PROCESSED_BUCKET_NAME)
-                
-                # Update DB with GCS Paths
-                conn = get_db_connection()
-                if conn:
-                    cur = conn.cursor()
-                    cur.execute(
-                        "UPDATE voice_recordings SET processed_url = %s, spectrogram_url = %s WHERE file_path = %s",
-                        (proc_path, spec_path, file_path)
-                    )
-                    conn.commit()
-                    conn.close()
-                    print(f"✅ AI SUCCESS: Database metadata updated for {user_id}")
+        # 1. Check if AI Modules loaded properly
+        if 'AudioETL' not in globals():
+            logger.error("❌ PIPELINE ABORTED: 'AudioETL' was never imported. Check the top of your file.")
+            return
+
+        etl_engine = AudioETL()
+        logger.info("⏳ Step 1: Running ETL Pipeline (Cleaning Audio)...")
+        
+        # 2. Check if Audio cleaning succeeds
+        if not etl_engine.run_pipeline(file_path, clean_path):
+            logger.warning("❌ PIPELINE ABORTED: etl_engine.run_pipeline returned False. Audio rejected.")
+            if cur:
+                cur.execute(
+                    """INSERT INTO parkinsons_results 
+                    (patient_uuid, patient_name, diagnosis_timestamp, ai_assessed_risk, parkinsons_probability, audio_source) 
+                    VALUES (%s, %s, %s, %s, %s, %s)""",
+                    (user_id, username, datetime.now(MY_TIMEZONE), "Invalid Audio - Rejected", 0.0, original_filename)
+                )
+                conn.commit()
+            return
+
+        # 3. Generate Spectrogram
+        logger.info("⏳ Step 2: Generating Spectrogram...")
+        generate_mel_spectrogram(clean_path, directory, filename_stem)
+        
+        # 4. Extract Biomarkers
+        logger.info("⏳ Step 3: Extracting Clinical Biomarkers...")
+        clinical = extract_clinical_metrics(clean_path)
+
+        # 5. Check if Model File Exists before loading
+        if AI_MODEL is None:
+            logger.error("❌ PIPELINE ABORTED: AI Model file 'parkinsons_high_acc_model.pth' not found in root directory!")
+            return
+
+        logger.info("⏳ Step 4 & 5: Running AI Inference...")
+        preprocess = transforms.Compose([
+            transforms.Grayscale(),
+            transforms.Resize((128, 128)),
+            transforms.ToTensor(),
+            transforms.Normalize((0.5,), (0.5,)),
+        ])
+        img = Image.open(spec_local_path).convert("L")
+        img_tensor = preprocess(img).unsqueeze(0).to(DEVICE)
+
+        with torch.no_grad():
+            output = AI_MODEL(img_tensor)
+            prob_pd = torch.nn.functional.softmax(output, dim=1)[0][1].item()
+        
+        risk = "High" if prob_pd > 0.8 else "Medium" if prob_pd > 0.4 else "Low"
+        logger.info(f"✅ AI Result: {risk} Risk (Prob: {round(prob_pd, 4)})")
+
+        # 6. Cloud Uploads
+        logger.info("⏳ Step 6: Uploading processed files to GCS...")
+        proc_path = upload_to_gcs(clean_path, f"processed/{user_id}/cleaned_{original_filename}", PROCESSED_BUCKET_NAME)
+        spec_path = upload_to_gcs(spec_local_path, f"spectrograms/{user_id}/{filename_stem}.png", PROCESSED_BUCKET_NAME)
+        
+        # 7. Database Update
+        logger.info("⏳ Step 7: Saving Results to Database...")
+        conn = get_db_connection()
+        if not conn:
+            logger.error("❌ PIPELINE ABORTED: Could not connect to Database inside background task.")
+            return
+            
+        try:
+            cur = conn.cursor()
+
+            print(f"DEBUG: I am connected to: {conn.get_dsn_parameters().get('dbname')} at {conn.get_dsn_parameters().get('host')}")
+            
+            # A. Update voice_recordings
+            cur.execute(
+                "UPDATE voice_recordings SET processed_url = %s, spectrogram_url = %s WHERE file_path = %s",
+                (proc_path, spec_path, file_path)
+            )
+
+            # B. Insert into parkinsons_results
+            cur.execute(
+                """INSERT INTO "parkinsons_results" 
+                ("Patient_UUID", "Patient_Name", "Diagnosis_Timestamp", "AI_Assessed_Risk", "Parkinsons_Probability", 
+                 "Jitter_Level", "Shimmer_Level", "HNR_Level", "Audio_Source") 
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+                (
+                    user_id, 
+                    username,
+                    datetime.now(MY_TIMEZONE), 
+                    risk, 
+                    round(float(prob_pd), 4), 
+                    clinical["jitter"], 
+                    clinical["shimmer"], 
+                    clinical["hnr"], 
+                    original_filename
+                )
+            )
+
+            conn.commit()
+            logger.info(f"🎉 SUCCESS: Full diagnosis results officially saved to DB for {user_id}, {username}!")
+
+        except Exception as db_error:
+            # Handles errors specifically within the database update steps
+            if conn: conn.rollback()
+            logger.error(f"❌ SQL ERROR in Background Task: {str(db_error)}")
+            raise db_error # Pass it to the outer block to inform the UI
+
     except Exception as e:
-        logger.error("Background processing failed")
+        # This catches EVERY error in the pipeline
+        logger.error(f"❌ CRITICAL PIPELINE CRASH: {str(e)}")
+        if conn: 
+            conn.rollback()
+            try:
+            # We insert a row so the "Status Check" endpoint sees an error instead of "processing" forever & this "tells" the Flutter app that the analysis failed
+                cur.execute(
+                    """INSERT INTO "parkinsons_results" ("Patient_UUID", "Patient_Name", "Audio_Source", "AI_Assessed_Risk", "Diagnosis_Timestamp") 
+                       VALUES (%s, %s, %s, %s, %s)""",
+                    (user_id, username, original_filename, "Error: Analysis Failed", datetime.now(MY_TIMEZONE))
+                )
+                conn.commit()
+            except Exception as db_e:
+                logger.error(f"Double Fault: Could not even save error to DB: {db_e}")
+    finally:
+        if cur: cur.close()
+        if conn: conn.close()
+
+        # Step 2: Digital Janitor (Clean local files)
+        for path in [file_path, clean_path, spec_local_path]:
+            if os.path.exists(path):
+                os.remove(path)
+                logger.info(f"🗑️ Cleaned up local file: {path}")
 
 # =========================================================
 # API ENDPOINTS
 # =========================================================
 
-@app.post("/register", tags=["Authentication"], status_code=201)
+@app.post("/register", summary="Register a new patient", tags=["Authentication"], status_code=201)
 async def register_user(user_data: UserRegistrationContract):
     """User's JSON Contract with Teammate's Passlib Security"""
     conn = get_db_connection()
@@ -303,7 +456,7 @@ async def register_user(user_data: UserRegistrationContract):
             (new_uuid, user_data.username, user_data.email, hashed_pwd)
         )
         conn.commit()
-        print(f"👤 NEW USER: {user_data.username} registered with ID {new_uuid}")
+        logger.info(f"👤 NEW USER: {user_data.username} registered with ID {new_uuid}")
         return {"message": "User created successfully", "user_id": new_uuid}
     except psycopg2.errors.UniqueViolation:
         conn.rollback()
@@ -320,7 +473,7 @@ class SlimOAuth2Form:
         self.username = username
         self.password = password
 
-@app.post("/login", tags=["Authentication"])
+@app.post("/login", summary="Login to get JWT Token", tags=["Authentication"])
 @limiter.limit("5/minute")
 async def login(request: Request, form_data: SlimOAuth2Form = Depends()):
     conn = get_db_connection()
@@ -338,11 +491,10 @@ async def login(request: Request, form_data: SlimOAuth2Form = Depends()):
     finally:
         if conn: conn.close()
 
-@app.post("/upload-audio", tags=["Diagnosis"], status_code=202)
+@app.post("/upload-audio", summary="Analyze Voice for Parkinson's", description="Uploads raw audio, runs the AI pipeline, and saves metrics.", tags=["Diagnosis"], status_code=202)
 @limiter.limit("10/minute")
 async def upload_audio(
     request: Request,
-    audioFormat: str = Form(...),
     timestamp: Optional[datetime] = Form(None), # Made optional just in case
     audio_file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks(),
@@ -369,24 +521,32 @@ async def upload_audio(
             while chunk := await audio_file.read(1024 * 1024):
                 file_size += len(chunk)
 
-            if file_size > MAX_FILE_SIZE_BYTES:
-                await f.close()
-                os.remove(local_path)
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"File too large. Maximum allowed size is {MAX_FILE_SIZE_MB}MB."
-                )
+                # Check size before writing to disk
+                if file_size > MAX_FILE_SIZE_BYTES:
+                    # 'async with' will close the file automatically here
+                    os.remove(local_path)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=f"File too large. Maximum allowed size is {MAX_FILE_SIZE_MB}MB."
+                    )
 
-            await f.write(chunk)
+                # SUCCESS: Write this specific chunk to the file
+                await f.write(chunk)
 
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, detail=f"File save failed: {str(e)}")
+        logger.error(f"❌ File save failed: {str(e)}") # Log the actual error
+        raise HTTPException(status_code=500, detail="Internal server error during file save.")
 
     # 3. FAIL-FAST SNR CHECK (Immediate Quality Gate)
     try:
         y, sr = librosa.load(local_path, sr=TARGET_SAMPLE_RATE)
+        
+        # --- NEW: Get Duration ---
+        duration = float(librosa.get_duration(y=y, sr=sr))
+        # -------------------------
+        
         S = np.abs(librosa.stft(y))
         power = np.mean(S**2, axis=0)
         signal_p = np.mean(np.sort(power)[-int(len(power)*0.1):])
@@ -402,7 +562,7 @@ async def upload_audio(
         raise HTTPException(status_code=500, detail="Audio Quality Analysis Failed")
 
     # 4. GCS Upload & DB Persistence
-    print(f"🚀 Uploading Original to Raw Bucket for user {current_user['username']}...")
+    logger.info(f"🚀 Uploading Original to Raw Bucket for user {current_user['username']}...")
     gcs_path = f"raw/{current_user['user_id']}/{file_id}.{ext}"
     upload_to_gcs(local_path, gcs_path, RAW_BUCKET_NAME)
 
@@ -411,24 +571,33 @@ async def upload_audio(
     if not conn: raise HTTPException(status_code=503, detail="Database connection failed")
     try:
         cur = conn.cursor()
+        # Added duration_seconds to the column list and the %s values
         cur.execute(
-            "INSERT INTO voice_recordings (user_id, file_path, audio_format, created_at, raw_url) VALUES (%s,%s,%s,%s,%s)",
-            (current_user["user_id"], local_path, audioFormat, actual_timestamp, gcs_path)
+            "INSERT INTO voice_recordings (user_id, file_path, audio_format, duration_seconds, created_at, raw_url) VALUES (%s,%s,%s,%s,%s,%s)",
+            (current_user["user_id"], local_path, ext, duration, actual_timestamp, gcs_path)
         )
         conn.commit()
-        print(f"✅ DB SUCCESS: Recording metadata saved.")
+        logger.info(f"✅ DB SUCCESS: Recording metadata saved with duration: {round(duration, 2)}s")
     except Exception as e:
         conn.rollback()
-        logger.error("DB ERROR")
+        logger.error(f"DB ERROR: {str(e)}")
+        raise HTTPException(500, detail=f"Failed to save metadata to database: {str(e)}")
     finally:
         conn.close()
 
-    background_tasks.add_task(run_audio_processing_pipeline, local_path, current_user["user_id"])
+    # Pass both the ID and the Username to the pipeline
+    background_tasks.add_task(
+        run_audio_processing_pipeline, 
+        local_path, 
+        current_user["user_id"], 
+        current_user["username"]
+)
     
     return {
         "message": "Audio accepted. Processing started.",
         "file_id": file_id,
         "snr": float(round(snr, 2)),
+        "duration": float(round(duration, 2)),
         "status": "In-Progress"
     }
 
@@ -436,49 +605,115 @@ async def upload_audio(
 # RESTORED ENDPOINTS
 # =========================================================
 
-@app.get("/get-diagnosis-result/{user_id}", response_model=DiagnosisResultContract, tags=["Diagnosis"])
+@app.get("/diagnosis-status/{file_id}", summary="Check if AI analysis is finished", tags=["Diagnosis"])
+async def check_status(file_id: str, current_user: dict = Depends(get_current_user)):
+    """
+    Poll this endpoint using the file_id received from /upload-audio.
+    Returns 'completed' if the AI results are in the DB, otherwise 'processing'.
+    """
+    conn = get_db_connection()
+    if not conn: 
+        raise HTTPException(status_code=503, detail="Database connection failed")
+    
+    try:
+        cur = conn.cursor()
+        
+        # We use LIKE f"{file_id}%" because the DB column 'Audio_Source' 
+        # contains the full filename (e.g., 'uuid.wav')
+        search_pattern = f"{file_id}%" 
+
+        cur.execute("""
+            SELECT "AI_Assessed_Risk", "Parkinsons_Probability" 
+            FROM "parkinsons_results" 
+            WHERE "Patient_UUID" = %s AND "Audio_Source" LIKE %s
+        """, (current_user["user_id"], search_pattern))
+        
+        result = cur.fetchone()
+
+        if result:
+            return {
+                "status": "completed",
+                "risk": result["AI_Assessed_Risk"],
+                "probability": result["Parkinsons_Probability"]
+            }
+        
+        # If no record is found yet, the background task is still running
+        return {"status": "processing"}
+
+    except Exception as e:
+        logger.error(f"❌ Status Check Error: {str(e)}")
+        raise HTTPException(status_code=500, detail="Error checking diagnosis status")
+    
+    finally:
+        # This block ALWAYS runs, even if the code above crashes
+        cur.close()
+        conn.close()
+
+@app.get("/get-diagnosis-result/{user_id}",summary="Fetch latest diagnosis result", response_model=DiagnosisResultContract, tags=["Diagnosis"])
 async def get_result(user_id: str, current_user: dict = Depends(get_current_user)):
     if user_id != current_user["user_id"]:
         raise HTTPException(403, "Unauthorized to view this data")
     
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM diagnosis_results WHERE user_id = %s ORDER BY created_at DESC LIMIT 1", (user_id,))
+    
+    # FIX
+    cur.execute("""
+        SELECT 
+            "Patient_UUID" as user_id,
+            "Patient_Name",
+            "Parkinsons_Probability" as probability,
+            "AI_Assessed_Risk" as diagnosis,
+            "Audio_Source" as audio_source,
+            "Jitter_Level" as jitter_level,
+            "Shimmer_Level" as shimmer_level,
+            "HNR_Level" as hnr_level,
+            "Diagnosis_Timestamp" as created_at
+        FROM "parkinsons_results" 
+        WHERE "Patient_UUID" = %s 
+        ORDER BY "Diagnosis_Timestamp" DESC LIMIT 1
+    """, (user_id,))
+    
     result = cur.fetchone()
     conn.close()
     
     if not result: raise HTTPException(404, "No diagnosis found yet.")
     return result
 
-@app.get("/diagnosis-history/{user_id}", response_model=DiagnosisHistoryContract, tags=["User Data"])
+@app.get("/diagnosis-history/{user_id}", summary="Fetch diagnosis history", response_model=DiagnosisHistoryContract, tags=["User Data"])
 async def get_history(user_id: str, current_user: dict = Depends(get_current_user)):
     if user_id != current_user["user_id"]: raise HTTPException(403, "Access denied")
     
     conn = get_db_connection()
     cur = conn.cursor()
-    cur.execute("SELECT * FROM diagnosis_results WHERE user_id = %s", (user_id,))
+    
+    # FIX
+    cur.execute("""
+        SELECT 
+            "Patient_UUID" as user_id,
+            "Patient_Name",
+            "Parkinsons_Probability" as probability,
+            "AI_Assessed_Risk" as diagnosis,
+            "Audio_Source" as audio_source,
+            "Jitter_Level" as jitter_level,
+            "Shimmer_Level" as shimmer_level,
+            "HNR_Level" as hnr_level,
+            "Diagnosis_Timestamp" as created_at
+        FROM parkinsons_results 
+        WHERE "Patient_UUID" = %s
+        ORDER BY "Diagnosis_Timestamp" DESC
+    """, (user_id,))
+    
     history = cur.fetchall()
     conn.close()
     return {"user_id": user_id, "diagnosisHistory": history}
 
-@app.post("/real-time-feedback", response_model=RealTimeFeedbackContract, tags=["Feedback"])
-async def submit_feedback(feedback_data: RealTimeFeedbackContract, current_user: dict = Depends(get_current_user)):
-    return feedback_data
-
-@app.get("/model-training-status/{modelId}", response_model=ModelTrainingStatusContract, tags=["System"])
-async def get_model_status(modelId: str):
-    return {
-        "modelId": modelId,
-        "trainingStatus": "Optimized",
-        "accuracy": 0.945,
-        "timestamp": datetime.now(MY_TIMEZONE)
-    }
 
 # =========================================================
 # NEW ENDPOINTS
 # =========================================================
 
-@app.get("/my-recordings", tags=["User Data"])
+@app.get("/my-recordings",summary="Get secure playback URLs", tags=["User Data"])
 async def get_my_recordings(current_user: dict = Depends(get_current_user)):
     """Fetches user recordings and generates secure 15-minute URLs for playback."""
     conn = get_db_connection()
@@ -497,3 +732,58 @@ async def get_my_recordings(current_user: dict = Depends(get_current_user)):
             row['spectrogram_url'] = generate_secure_url(PROCESSED_BUCKET_NAME, row['spectrogram_url'])
             
     return rows
+
+@app.post("/real-time-feedback", summary="Submit patient feedback", tags=["Feedback"])
+async def submit_feedback(feedback_data: RealTimeFeedbackContract, current_user: dict = Depends(get_current_user)):
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database connection failed")
+    
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """INSERT INTO user_feedback (user_id, feedback_text, submitted_at) 
+               VALUES (%s, %s, %s) RETURNING feedback_id""",
+            (current_user["user_id"], feedback_data.feedback, datetime.now(MY_TIMEZONE))
+        )
+        conn.commit()
+        logger.info(f"📝 FEEDBACK RECEIVED from {current_user['username']}")
+        
+        # Return the data back with the user's ID to confirm success
+        return {
+            "user_id": current_user["user_id"],
+            "feedback": feedback_data.feedback,
+            "timestamp": datetime.now(MY_TIMEZONE)
+        }
+    except Exception as e:
+        conn.rollback()
+        logger.error(f"Feedback Save Error: {e}")
+        raise HTTPException(500, "Failed to save feedback")
+    finally:
+        conn.close()
+
+@app.get("/model-training-status/{modelId}", summary="Check AI Model Status", response_model=ModelTrainingStatusContract, tags=["System"])
+async def get_model_status(modelId: str):
+    conn = get_db_connection()
+    if not conn:
+        raise HTTPException(status_code=503, detail="Database connection failed")
+    
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT model_id, training_status, accuracy, deployed_at FROM model_registry WHERE model_id = %s",
+            (modelId,)
+        )
+        row = cur.fetchone()
+        
+        if not row:
+            raise HTTPException(404, detail=f"Model ID '{modelId}' not found in registry.")
+
+        return {
+            "modelId": row["model_id"],
+            "trainingStatus": row["training_status"],
+            "accuracy": row["accuracy"],
+            "timestamp": row["deployed_at"]
+        }
+    finally:
+        conn.close()
